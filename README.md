@@ -23,12 +23,8 @@ curl -L "https://www.dropbox.com/scl/fi/5f808uvbfaxllnxov8cr5/weights.pth?rlkey=
 To get the SHAPE profile of a single molecule `mol.cif`, run
 ```
 python3 -m sgnm --weights weights.pth mol.cif
-# OR
-python3 -m sgnm mol.cif
 ```
-If a path to the weights is not passed, then a non-parametric model will be used instead.
-
-To save the profile to an HDF5 file, you may pass `--out profile.h5` as an argument.
+If a path to the weights is not passed, then a non-parametric model will be used instead. To save the profile to an HDF5 file, you may pass `--out profile.h5` as an argument.
 
 ## Large-Scale
 
