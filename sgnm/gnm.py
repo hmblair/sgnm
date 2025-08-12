@@ -1,5 +1,4 @@
 import torch
-import ciffy
 
 
 def _local_frame(x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:

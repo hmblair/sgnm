@@ -205,7 +205,7 @@ class SGNM(BaseSGNM):
 
         poly = poly.get_by_name(FRAMES)
         poly, coords = poly.center(ciffy.RESIDUE)
-        _, frames = poly.align(ciffy.RESIDUE)
+        frames = _base_frame(poly)
 
         return self(coords, frames)
 

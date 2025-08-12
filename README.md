@@ -24,6 +24,7 @@ To get the SHAPE profile of a single molecule `mol.cif`, run
 ```
 python3 -m sgnm --weights weights.pth mol.cif
 ```
+To save the profile to an HDF5 file, you may pass `--out profile.h5` as an argument.
 
 ## Large-Scale
 
