@@ -127,6 +127,7 @@ class BaseSGNM(nn.Module):
     def forward(
         self: SGNM,
         coords: torch.Tensor,
+        frames: torch.Tensor | None = None,
     ) -> torch.Tensor:
 
         dists = torch.cdist(coords, coords)
@@ -241,29 +242,32 @@ class Score(nn.Module):
 
         self.module = SGNM.load(weights)
         self.module.eval()
+        for param in self.module.parameters():
+            param.requires_grad = False
 
     def forward(
         self: SGNM,
         profile: torch.Tensor,
         coords: torch.Tensor,
         frames: torch.Tensor | None = None,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Return the MAE between the provided and predicted SHAPE profiles.
+        Also return the predicted profile itself.
         """
 
-        with torch.no_grad():
-            pred = self.module(coords, frames)
+        pred = self.module(coords, frames)
+        ix = ~torch.isnan(profile)
 
-        return torch.abs(pred - profile).mean()
+        return torch.abs(pred[ix] - profile[ix]).mean(), pred
 
     def ciffy(
         self: SGNM,
         profile: torch.Tensor,
         poly: ciffy.Polymer,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
 
-        with torch.no_grad():
-            pred = self.module.ciffy(poly)
+        pred = self.module.ciffy(poly)
+        ix = ~torch.isnan(profile)
 
-        return torch.abs(pred - profile).mean()
+        return torch.abs(pred[ix] - profile[ix]).mean(), pred
