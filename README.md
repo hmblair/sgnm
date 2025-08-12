@@ -23,12 +23,16 @@ curl -L "https://www.dropbox.com/scl/fi/5f808uvbfaxllnxov8cr5/weights.pth?rlkey=
 To get the SHAPE profile of a single molecule `mol.cif`, run
 ```
 python3 -m sgnm --weights weights.pth mol.cif
+# OR
+python3 -m sgnm mol.cif
 ```
+If a path to the weights is not passed, then a non-parametric model will be used instead.
+
 To save the profile to an HDF5 file, you may pass `--out profile.h5` as an argument.
 
 ## Large-Scale
 
-To integrate the model into an existing `torch` pipeline, import and init the `SGNM` module. If a path to the weights is not passed, then a non-parametric model will be used instead.
+To integrate the model into an existing `torch` pipeline, import and init the `SGNM` module. The same remarks about non-parametric models apply as above.
 ```
 from sgnm import SGNM
 module = SGNM.load(args.weights)
@@ -44,7 +48,7 @@ profile = module(coords)
 
 ## Scoring
 
-`sgnm` provides a scoring module for directly computing the MAE between a SHAPE profile and an input structure. The same remarks about non-parametric models apply as above.
+`sgnm` provides a scoring module for directly computing the MAE between a SHAPE profile and an input structure.
 ```
 import sgnm
 objective = sgnm.score(args.weights)
