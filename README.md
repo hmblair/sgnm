@@ -41,7 +41,6 @@ profile = module(coords, frames)
 # OR
 profile = module(coords)
 ```
-The tensor `coords` must be of shape `(n, 3)`, and `frames` of shape `(n, 3, 3)`. The weights were trained with the latter being the frame formed by the C2-C4-C6 atoms, and the former the midpoint of these three, so likely it will work best if you use these as inputs.
 
 ## Scoring
 
