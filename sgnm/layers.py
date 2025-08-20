@@ -3,8 +3,16 @@ import itertools
 import torch
 import torch.nn as nn
 import ciffy
-from ciffy.enum import Adenosine, Cytosine, Guanosine, Uridine
-from .gnm import _gnm_variances, _orientation_score, _local_frame
+import dlu
+from ciffy.enum import Adenosine, Cytosine, Guanosine, Uridine, Nucleobase
+from .gnm import (
+    _gnm_variances,
+    _gnm_correlations,
+    _orientation_score,
+    _local_frame,
+)
+from copy import deepcopy
+from tqdm import trange
 
 FRAME1 = torch.tensor([
     Adenosine.C2.value,
@@ -140,7 +148,7 @@ class BaseSGNM(nn.Module):
         poly: ciffy.Polymer,
     ) -> torch.Tensor:
 
-        poly = poly.get_by_name(FRAMES)
+        poly = poly.frame()
         _, coords = poly.center(ciffy.RESIDUE)
 
         return self(coords)
@@ -204,7 +212,7 @@ class SGNM(BaseSGNM):
         poly: ciffy.Polymer,
     ) -> torch.Tensor:
 
-        poly = poly.get_by_name(FRAMES)
+        poly = poly.frame().strip()
         poly, coords = poly.center(ciffy.RESIDUE)
         frames = _base_frame(poly)
 
@@ -246,7 +254,7 @@ class Score(nn.Module):
             param.requires_grad = False
 
     def forward(
-        self: SGNM,
+        self: Score,
         profile: torch.Tensor,
         coords: torch.Tensor,
         frames: torch.Tensor | None = None,
@@ -262,7 +270,7 @@ class Score(nn.Module):
         return torch.abs(pred[ix] - profile[ix]).mean(), pred
 
     def ciffy(
-        self: SGNM,
+        self: Score,
         profile: torch.Tensor,
         poly: ciffy.Polymer,
     ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -271,3 +279,29 @@ class Score(nn.Module):
         ix = ~torch.isnan(profile)
 
         return torch.abs(pred[ix] - profile[ix]).mean(), pred
+
+    def relax(
+        self: Score,
+        profile: torch.Tensor,
+        poly: ciffy.Polymer,
+        steps: int = 1,
+        lr: float = 1E-3,
+        alpha: float = 1E-3,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+
+        relaxed = deepcopy(poly)
+
+        relaxed.coordinates.requires_grad_(True)
+        opt = torch.optim.Adam([relaxed.coordinates], lr=lr)
+
+        for _ in trange(steps):
+
+            opt.zero_grad()
+            mae, _ = self.ciffy(profile, relaxed)
+
+            loss = mae + alpha * ciffy.rmsd(poly, relaxed)
+
+            loss.backward()
+            opt.step()
+
+        return relaxed

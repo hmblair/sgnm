@@ -30,7 +30,7 @@ def _laplacian(adj: torch.Tensor) -> torch.Tensor:
     Compute the graph Laplacian / Kirchoff matrix.
     """
 
-    deg = torch.diag(adj.sum(1))
+    deg = torch.diag_embed(adj.sum(-1))
     return deg - adj
 
 
@@ -39,16 +39,17 @@ def _gnm_correlations(adj: torch.Tensor, rtol: float = 1E-2) -> torch.Tensor:
     Compute correlations between molecules under a Gaussian model.
     """
 
-    lap = _laplacian(adj)
+    lap = _laplacian(adj) / adj.size(0)
     return torch.linalg.pinv(lap, rtol=rtol)
 
 
-def _gnm_variances(adj: torch.Tensor) -> torch.Tensor:
+def _gnm_variances(adj: torch.Tensor, rtol: float = 1E-2) -> torch.Tensor:
     """
     Compute the variance in molcular positions under a Gaussian model.
     """
 
-    return torch.diagonal(_gnm_correlations(adj))
+    corr = _gnm_correlations(adj, rtol)
+    return torch.diagonal(corr, dim1=-1, dim2=-2)
 
 
 def _orientation_score(frames: torch.Tensor) -> torch.Tensor:
