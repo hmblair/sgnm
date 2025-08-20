@@ -4,13 +4,13 @@ import sgnm
 
 # Load the polymer
 
-file = "9GBZ.cif"
+file = "structures/9GBZ.cif"
 poly = ciffy.load(file)
 
 # Get the RNA (chain D)
 
 ix = 3
-rna = poly.select(ix, ciffy.CHAIN)
+rna = poly.select(ix).strip()
 
 # Generate a random SHAPE profile
 
@@ -24,5 +24,5 @@ objective = sgnm.score(path)
 
 # Compute the score
 
-score = objective.ciffy(profile, rna)
-print(f"MAE: {score}")
+mae, _ = objective.ciffy(profile, rna)
+print(f"MAE: {mae}")

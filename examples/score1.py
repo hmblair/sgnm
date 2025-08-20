@@ -1,16 +1,17 @@
 import torch
 import sgnm
 
+batch = 2
 residues = 200
 coords = 3
 
 # Generate random coordinates
 
-x = torch.randn(residues, coords)
+x = torch.randn(batch, residues, coords)
 
 # Generate a random SHAPE profile
 
-profile = torch.randn(residues)
+profile = torch.randn(batch, residues)
 
 # Init the objective
 
@@ -19,5 +20,5 @@ objective = sgnm.score(path)
 
 # Compute the score
 
-score = objective(profile, x)
-print(f"MAE: {score}")
+mae, _ = objective(profile, x)
+print(f"MAE: {mae}")
