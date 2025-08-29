@@ -51,11 +51,11 @@ objective = sgnm.score(args.weights)
 # OR
 objective = sgnm.score()
 ```
-Scoring has the same syntax as profile prediction.
+Scoring has similar syntax to profile prediction.
 ```
-mae = objective(coords, frames)
+mae = objective(profile, coords, frames)
 # OR
-mae = objective(coords)
+mae = objective(profile, coords)
 ```
 
 # Help
