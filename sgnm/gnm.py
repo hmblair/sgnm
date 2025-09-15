@@ -58,7 +58,7 @@ def _orientation_score(frames: torch.Tensor) -> torch.Tensor:
     using the SO(3) metric.
     """
 
-    score = frames[:, None] @ frames[None, :].transpose(-1, -2)
+    score = frames[..., :, None] @ frames[..., None, :].transpose(-1, -2)
     score = torch.einsum("...ii->...", score)
     score = (score - 1).abs() / 2
 
