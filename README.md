@@ -42,6 +42,8 @@ profile = module(coords, frames)
 profile = module(coords)
 ```
 
+`coords` should be of shape `(..., n, 3)` and frames of shape `(..., n, 3, 3)`, with the batch dimension optional.
+
 ## Scoring
 
 `sgnm` provides a scoring module for directly computing the MAE between a SHAPE profile and an input structure.
