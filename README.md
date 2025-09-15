@@ -35,14 +35,13 @@ module = SGNM.load(args.weights)
 # OR
 module = SGNM.load()
 ```
-Predicting the SHAPE profile requires coordinates as inputs. Optionally (and suggested if using the parametric model), you may also provide local frames as well.
+Predicting the SHAPE profile requires coordinates as inputs, one per residue. Optionally (and suggested if using the parametric model), you may also provide local frames as well.
 ```
 profile = module(coords, frames)
 # OR
 profile = module(coords)
 ```
-
-`coords` should be of shape `(..., n, 3)` and frames of shape `(..., n, 3, 3)`, with the batch dimension optional.
+`coords` should be of shape `(..., n, 3)` and frames of shape `(..., n, 3, 3)`, with `n` the number of residues and the batch dimension optional. During training, the frames were formed by the `C2-C4-C6` triplet, and the coordinates were the center of these triplets, so as inputs these are preferable. The model should be fairly robust to using different frames or residue coordinates. 
 
 ## Scoring
 
