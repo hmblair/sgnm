@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 NAME = 'sgnm'
-VERSION = '0.1.0'
+VERSION = '1.1.0'
 LICENSE = 'CC BY-NC 4.0'
 AUTHOR = 'Hamish M. Blair'
 EMAIL = 'hmblair@stanford.edu'

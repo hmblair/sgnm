@@ -52,6 +52,14 @@ def _gnm_variances(adj: torch.Tensor, rtol: float = 1E-2) -> torch.Tensor:
     return torch.diagonal(corr, dim1=-1, dim2=-2)
 
 
+def _relative_orientation(frames: torch.Tensor) -> torch.Tensor:
+
+    return (
+        frames[..., :, None, :, :] @
+        frames[..., None, :, :, :].transpose(-1, -2)
+    )
+
+
 def _orientation_score(frames: torch.Tensor) -> torch.Tensor:
     """
     Get pairwise base orientations based on the input frames, and score them
