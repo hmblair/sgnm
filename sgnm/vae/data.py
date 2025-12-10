@@ -157,10 +157,6 @@ class StructureOnlyDataset:
         if n_residues > self.config.max_length:
             return None
 
-        # Check coordinate consistency
-        if n_residues * 3 != stripped.coordinates.size(0):
-            return None
-
         # Extract residue centers
         _, coords = stripped.center(ciffy.RESIDUE)
 
