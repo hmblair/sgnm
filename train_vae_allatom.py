@@ -96,7 +96,8 @@ def main():
 
     # Find a valid sample from validation set
     reference_sample = None
-    for sample in val_dataset:
+    for i in range(len(val_dataset)):
+        sample = val_dataset[i]
         if sample is not None and sample.polymer is not None:
             reference_sample = sample
             print(f"Selected reference: {sample.name}")
@@ -106,6 +107,8 @@ def main():
 
     if reference_sample is None:
         print("No valid reference sample found!")
+        print(f"  Checked {len(val_dataset)} files from validation set")
+        print(f"  Failure stats: {val_dataset.get_failure_stats()}")
         return
 
     # Move reference to device

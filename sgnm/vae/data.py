@@ -270,8 +270,19 @@ class AllAtomDataset:
         self.config = config
         self.split = split
 
+        # Track failure reasons for debugging
+        self._failure_counts: dict[str, int] = {}
+
         self._load_files()
         self._apply_split()
+
+    def _record_failure(self, reason: str) -> None:
+        """Record a failure reason for debugging."""
+        self._failure_counts[reason] = self._failure_counts.get(reason, 0) + 1
+
+    def get_failure_stats(self) -> dict[str, int]:
+        """Return failure statistics for debugging."""
+        return dict(self._failure_counts)
 
     def _load_files(self) -> None:
         """Enumerate structure files in directory."""
@@ -326,17 +337,26 @@ class AllAtomDataset:
         try:
             poly = ciffy.load(path)
 
-            if poly.size(ciffy.CHAIN) > self.config.max_chains:
+            rna_chains = list(poly.chains(ciffy.RNA))
+            if not rna_chains:
+                self._record_failure("no_rna_chains")
                 return None
 
-            for chain in poly.chains(ciffy.RNA):
+            # Filter by RNA chain count (not total chains)
+            if len(rna_chains) > self.config.max_chains:
+                self._record_failure("too_many_rna_chains")
+                return None
+
+            for chain in rna_chains:
                 sample = self._process_chain_allatom(chain, filename)
                 if sample is not None:
                     return sample
 
+            # If we get here, all chains failed processing
             return None
 
-        except Exception:
+        except Exception as e:
+            self._record_failure(f"load_error: {type(e).__name__}")
             return None
 
     def _process_chain_allatom(
@@ -347,17 +367,21 @@ class AllAtomDataset:
         stripped = chain.strip().polymer_only()
 
         if stripped.empty():
+            self._record_failure("empty_after_strip")
             return None
 
         # Verify no invalid atom types remain (must be in [0, 148])
         if (stripped.atoms < 0).any() or (stripped.atoms > 148).any():
+            self._record_failure("invalid_atom_types")
             return None
 
         n_residues = stripped.size(ciffy.RESIDUE)
 
         if n_residues < self.config.min_length:
+            self._record_failure(f"too_short ({n_residues} < {self.config.min_length})")
             return None
         if n_residues > self.config.max_length:
+            self._record_failure(f"too_long ({n_residues} > {self.config.max_length})")
             return None
 
         # Get all-atom coordinates
