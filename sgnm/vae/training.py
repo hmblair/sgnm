@@ -132,6 +132,7 @@ class VAETrainer:
         train_config: VAETrainConfig,
         train_data: Iterator[StructureSample],
         val_data: Iterator[StructureSample] | None = None,
+        epoch_callback: callable | None = None,
     ) -> None:
         """
         Initialize trainer.
@@ -142,8 +143,11 @@ class VAETrainer:
             train_config: Training configuration
             train_data: Training data iterator
             val_data: Validation data iterator (optional)
+            epoch_callback: Optional callback called at end of each epoch.
+                            Signature: callback(model, epoch, metrics)
         """
         self.model = model.to(train_config.device)
+        self.epoch_callback = epoch_callback
         self.vae_config = vae_config
         self.train_config = train_config
         self.train_data = train_data
@@ -267,6 +271,10 @@ class VAETrainer:
                 if "val" in history[-1]:
                     desc += f" | val={history[-1]['val']['loss']:.4f}"
                 epoch_iter.set_postfix_str(desc.split(" | ", 1)[-1] if " | " in desc else "")
+
+            # Epoch callback
+            if self.epoch_callback is not None:
+                self.epoch_callback(self.model, epoch, history[-1])
 
         return TrainResults(
             best_val_loss=self.state.best_val_loss,
