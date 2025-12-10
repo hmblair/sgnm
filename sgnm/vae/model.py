@@ -2,12 +2,16 @@
 Main StructureVAE model combining encoder and decoder.
 """
 from __future__ import annotations
+from typing import TYPE_CHECKING
 import torch
 import torch.nn as nn
 
 from .config import VAEConfig
-from .encoder import E3Encoder
-from .decoder import E3Decoder
+from .encoder import E3Encoder, AllAtomE3Encoder
+from .decoder import E3Decoder, AllAtomE3Decoder
+
+if TYPE_CHECKING:
+    from .training import AllAtomStructureSample
 
 
 class StructureVAE(nn.Module):
@@ -255,6 +259,273 @@ class StructureVAE(nn.Module):
         Returns:
             Loaded StructureVAE model
         """
+        checkpoint = torch.load(path, map_location=device)
+        model = cls(checkpoint["config"])
+        model.load_state_dict(checkpoint["state_dict"])
+        return model
+
+
+class AllAtomStructureVAE(nn.Module):
+    """
+    E(3)-Equivariant VAE for all-atom RNA structures.
+
+    Uses hierarchical encoding (atoms → residues) and decoding (residues → atoms)
+    with per-residue latent vectors. Supports saving reconstructed structures
+    as CIF files using ciffy.
+
+    Example usage:
+        config = VAEConfig(hidden_dim=128, latent_dim=32)
+        model = AllAtomStructureVAE(config)
+
+        # Training
+        outputs = model(sample)
+        loss = compute_loss(outputs['recon'], sample.atom_coords, ...)
+
+        # Reconstruction with Polymer output
+        polymer = model.reconstruct_polymer(sample)
+        polymer.write("reconstructed.pdb")
+
+        # Ball sampling around reference
+        polymers = model.sample_around_reference(sample, num_samples=10)
+    """
+
+    def __init__(self, config: VAEConfig) -> None:
+        super().__init__()
+        self.config = config
+        self.encoder = AllAtomE3Encoder(config)
+        self.decoder = AllAtomE3Decoder(config)
+
+    def encode(
+        self,
+        sample: AllAtomStructureSample,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Encode all-atom structure to per-residue latent distribution.
+
+        Args:
+            sample: AllAtomStructureSample
+
+        Returns:
+            mu: (N, latent_dim) mean
+            logvar: (N, latent_dim) log variance
+        """
+        return self.encoder(
+            sample.atom_coords,
+            sample.atom_types,
+            sample.residue_indices,
+            sample.residue_types,
+            sample.atoms_per_residue,
+        )
+
+    def reparameterize(
+        self,
+        mu: torch.Tensor,
+        logvar: torch.Tensor,
+    ) -> torch.Tensor:
+        """Reparameterization trick: z = mu + std * eps."""
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + std * eps
+
+    def decode(
+        self,
+        z: torch.Tensor,
+        sample: AllAtomStructureSample,
+        anchor_coords: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """
+        Decode per-residue latents to all-atom coordinates.
+
+        Args:
+            z: (N, latent_dim) latent vectors
+            sample: AllAtomStructureSample (provides structure info)
+            anchor_coords: (N, 3) optional residue anchor coordinates
+
+        Returns:
+            (A, 3) all-atom coordinates
+        """
+        return self.decoder(
+            z,
+            sample.residue_types,
+            sample.atom_types,
+            sample.residue_indices,
+            sample.atoms_per_residue,
+            anchor_coords,
+        )
+
+    def _compute_residue_centers(
+        self,
+        atom_coords: torch.Tensor,
+        residue_indices: torch.Tensor,
+        atoms_per_residue: torch.Tensor,
+    ) -> torch.Tensor:
+        """Compute residue centers from atom coordinates."""
+        N = atoms_per_residue.size(0)
+        device = atom_coords.device
+
+        centers = torch.zeros(N, 3, device=device)
+        offset = 0
+        for res_idx in range(N):
+            n_atoms = atoms_per_residue[res_idx].item()
+            if n_atoms > 0:
+                centers[res_idx] = atom_coords[offset:offset+n_atoms].mean(dim=0)
+            offset += n_atoms
+
+        return centers
+
+    def forward(
+        self,
+        sample: AllAtomStructureSample,
+    ) -> dict[str, torch.Tensor]:
+        """
+        Full forward pass: encode, sample, decode.
+
+        Args:
+            sample: AllAtomStructureSample
+
+        Returns:
+            Dictionary with keys:
+                - 'recon': (A, 3) reconstructed atom coordinates
+                - 'mu': (N, latent_dim) latent mean
+                - 'logvar': (N, latent_dim) latent log variance
+                - 'z': (N, latent_dim) sampled latent vectors
+        """
+        # Encode
+        mu, logvar = self.encode(sample)
+
+        # Sample
+        if self.training:
+            z = self.reparameterize(mu, logvar)
+        else:
+            z = mu
+
+        # Compute residue centers for anchor
+        anchor_coords = self._compute_residue_centers(
+            sample.atom_coords,
+            sample.residue_indices,
+            sample.atoms_per_residue,
+        )
+
+        # Decode
+        recon = self.decode(z, sample, anchor_coords)
+
+        return {
+            "recon": recon,
+            "mu": mu,
+            "logvar": logvar,
+            "z": z,
+        }
+
+    @torch.no_grad()
+    def reconstruct(
+        self,
+        sample: AllAtomStructureSample,
+    ) -> torch.Tensor:
+        """
+        Reconstruct atom coordinates through the VAE.
+
+        Args:
+            sample: AllAtomStructureSample
+
+        Returns:
+            (A, 3) reconstructed atom coordinates
+        """
+        mu, _ = self.encode(sample)
+
+        anchor_coords = self._compute_residue_centers(
+            sample.atom_coords,
+            sample.residue_indices,
+            sample.atoms_per_residue,
+        )
+
+        return self.decode(mu, sample, anchor_coords)
+
+    @torch.no_grad()
+    def reconstruct_polymer(
+        self,
+        sample: AllAtomStructureSample,
+    ):
+        """
+        Reconstruct structure and return as ciffy Polymer.
+
+        Args:
+            sample: AllAtomStructureSample (must have polymer attribute)
+
+        Returns:
+            ciffy.Polymer with reconstructed coordinates
+        """
+        if sample.polymer is None:
+            raise ValueError("Sample must have polymer attribute for reconstruction")
+
+        # Reconstruct coordinates
+        recon_coords = self.reconstruct(sample)
+
+        # Create new Polymer with updated coordinates
+        return sample.polymer.with_coordinates(recon_coords)
+
+    @torch.no_grad()
+    def sample_around_reference(
+        self,
+        sample: AllAtomStructureSample,
+        num_samples: int = 10,
+        radius: float = 1.0,
+    ) -> list:
+        """
+        Sample structures in a ball around a reference in latent space.
+
+        Args:
+            sample: Reference AllAtomStructureSample
+            num_samples: Number of samples to generate
+            radius: Radius of ball in latent space (std units)
+
+        Returns:
+            List of ciffy.Polymer objects with sampled coordinates
+        """
+        if sample.polymer is None:
+            raise ValueError("Sample must have polymer attribute for sampling")
+
+        # Encode reference
+        mu, logvar = self.encode(sample)
+        std = torch.exp(0.5 * logvar)
+
+        # Compute anchor coordinates
+        anchor_coords = self._compute_residue_centers(
+            sample.atom_coords,
+            sample.residue_indices,
+            sample.atoms_per_residue,
+        )
+
+        # Sample in ball around mu
+        polymers = []
+        for _ in range(num_samples):
+            # Sample random direction and distance
+            eps = torch.randn_like(mu)
+            eps = eps / eps.norm(dim=-1, keepdim=True)  # Unit direction
+            distance = torch.rand(1, device=mu.device) ** (1/3)  # Uniform in ball
+            z = mu + radius * std * eps * distance
+
+            # Decode
+            coords = self.decode(z, sample, anchor_coords)
+
+            # Create Polymer with new coordinates
+            poly = sample.polymer.with_coordinates(coords)
+            polymers.append(poly)
+
+        return polymers
+
+    def save(self, path: str) -> None:
+        """Save model weights and config."""
+        torch.save(
+            {
+                "config": self.config,
+                "state_dict": self.state_dict(),
+            },
+            path,
+        )
+
+    @classmethod
+    def load(cls, path: str, device: str = "cpu") -> "AllAtomStructureVAE":
+        """Load model from saved file."""
         checkpoint = torch.load(path, map_location=device)
         model = cls(checkpoint["config"])
         model.load_state_dict(checkpoint["state_dict"])

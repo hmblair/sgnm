@@ -13,7 +13,6 @@ from ..config import FRAME1, FRAME2, FRAME3
 from ..data import tokenize
 from ..training import TrainState, TrainResults
 from .config import VAEConfig
-from .model import StructureVAE
 from .losses import VAELoss
 
 
@@ -115,6 +114,32 @@ class StructureSample:
 
     frames: torch.Tensor | None = None
     """(N, 3, 3) optional local coordinate frames."""
+
+
+@dataclass
+class AllAtomStructureSample:
+    """A single all-atom structure sample for VAE training."""
+
+    name: str
+    """Sample identifier."""
+
+    atom_coords: torch.Tensor
+    """(A, 3) all-atom coordinates."""
+
+    atom_types: torch.Tensor
+    """(A,) atom type indices from ciffy enum."""
+
+    residue_indices: torch.Tensor
+    """(A,) maps each atom to its residue index."""
+
+    residue_types: torch.Tensor
+    """(N,) nucleotide type indices (0-3 for A/C/G/U)."""
+
+    atoms_per_residue: torch.Tensor
+    """(N,) number of atoms in each residue."""
+
+    polymer: ciffy.Polymer | None = None
+    """Original ciffy Polymer for reconstruction/saving."""
 
 
 class VAETrainer:
@@ -487,6 +512,7 @@ def train_vae(
     # Set seeds for reproducibility
     import random
     import numpy as np
+    from .model import StructureVAE
 
     torch.manual_seed(42)
     random.seed(42)
@@ -506,3 +532,325 @@ def train_vae(
     )
 
     return trainer.train()
+
+
+class AllAtomVAETrainer:
+    """
+    Training loop for AllAtomStructureVAE.
+
+    Handles all-atom structures with hierarchical encoding/decoding.
+    """
+
+    def __init__(
+        self,
+        model: nn.Module,
+        vae_config: VAEConfig,
+        train_config: VAETrainConfig,
+        train_data: Iterator[AllAtomStructureSample],
+        val_data: Iterator[AllAtomStructureSample] | None = None,
+        epoch_callback: callable | None = None,
+    ) -> None:
+        from .losses import AllAtomVAELoss
+
+        self.model = model.to(train_config.device)
+        self.epoch_callback = epoch_callback
+        self.vae_config = vae_config
+        self.train_config = train_config
+        self.train_data = train_data
+        self.val_data = val_data
+
+        self.state = TrainState()
+
+        self.optimizer = torch.optim.AdamW(
+            model.parameters(),
+            lr=train_config.learning_rate,
+            weight_decay=train_config.weight_decay,
+        )
+
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            self.optimizer,
+            mode="min",
+            factor=0.5,
+            patience=5,
+        )
+
+        self.loss_fn = AllAtomVAELoss(
+            vae_config,
+            use_pairwise=train_config.use_pairwise_loss,
+            pairwise_weight=train_config.pairwise_weight,
+        )
+
+        self._setup_logging()
+
+    def _setup_logging(self) -> None:
+        if self.train_config.wandb_project:
+            try:
+                import wandb
+                wandb.init(
+                    project=self.train_config.wandb_project,
+                    name=self.train_config.wandb_run,
+                    config={
+                        "vae_config": vars(self.vae_config),
+                        "train_config": vars(self.train_config),
+                    },
+                )
+                self.wandb = wandb
+            except ImportError:
+                print("Warning: wandb not installed, skipping logging")
+                self.wandb = None
+        else:
+            self.wandb = None
+
+    def _to_device(self, sample: AllAtomStructureSample) -> AllAtomStructureSample:
+        device = self.train_config.device
+        return AllAtomStructureSample(
+            name=sample.name,
+            atom_coords=sample.atom_coords.to(device),
+            atom_types=sample.atom_types.to(device),
+            residue_indices=sample.residue_indices.to(device),
+            residue_types=sample.residue_types.to(device),
+            atoms_per_residue=sample.atoms_per_residue.to(device),
+            polymer=sample.polymer,
+        )
+
+    def train(self) -> TrainResults:
+        try:
+            from tqdm import tqdm
+            use_tqdm = True
+        except ImportError:
+            use_tqdm = False
+
+        history = []
+
+        epoch_iter = range(self.train_config.max_epochs)
+        if use_tqdm:
+            epoch_iter = tqdm(epoch_iter, desc="Training", unit="epoch")
+
+        for epoch in epoch_iter:
+            self.state.epoch = epoch
+            self.loss_fn.set_epoch(epoch)
+
+            train_metrics = self._train_epoch()
+            history.append({"epoch": epoch, "train": train_metrics})
+
+            if self.val_data is not None:
+                val_metrics = self._validate()
+                history[-1]["val"] = val_metrics
+
+                self.scheduler.step(val_metrics["loss"])
+
+                if self._check_improvement(val_metrics["loss"]):
+                    self.state.patience_counter = 0
+                    if self.train_config.save_best:
+                        self._save_checkpoint("best.pth")
+                else:
+                    self.state.patience_counter += 1
+
+                if self.state.should_stop(self.train_config.patience):
+                    print(f"Early stopping at epoch {epoch}")
+                    break
+
+            if epoch % self.train_config.save_every == 0:
+                self._save_checkpoint(f"epoch_{epoch}.pth")
+
+            self._log_epoch(epoch, history[-1])
+
+            if use_tqdm:
+                desc = f"Epoch {epoch}"
+                if "train" in history[-1]:
+                    desc += f" | loss={history[-1]['train']['loss']:.4f}"
+                if "val" in history[-1]:
+                    desc += f" | val={history[-1]['val']['loss']:.4f}"
+                epoch_iter.set_postfix_str(desc.split(" | ", 1)[-1] if " | " in desc else "")
+
+            if self.epoch_callback is not None:
+                self.epoch_callback(self.model, epoch, history[-1])
+
+        return TrainResults(
+            best_val_loss=self.state.best_val_loss,
+            final_epoch=self.state.epoch,
+            total_steps=self.state.global_step,
+            history=history,
+        )
+
+    def _train_epoch(self) -> dict[str, float]:
+        self.model.train()
+
+        total_loss = 0.0
+        total_recon = 0.0
+        total_kl = 0.0
+        total_global_rmsd = 0.0
+        total_local_rmsd = 0.0
+        num_samples = 0
+
+        try:
+            from tqdm import tqdm
+            sample_iter = tqdm(
+                self.train_data,
+                desc=f"  Epoch {self.state.epoch}",
+                leave=False,
+                unit="sample",
+            )
+        except ImportError:
+            sample_iter = self.train_data
+
+        for sample in sample_iter:
+            if sample is None:
+                continue
+
+            sample = self._to_device(sample)
+
+            self.optimizer.zero_grad()
+
+            outputs = self.model(sample)
+
+            losses = self.loss_fn(
+                outputs["recon"],
+                sample.atom_coords,
+                outputs["mu"],
+                outputs["logvar"],
+                sample.residue_indices,
+                sample.atoms_per_residue,
+            )
+
+            losses["total"].backward()
+
+            if self.train_config.gradient_clip:
+                torch.nn.utils.clip_grad_norm_(
+                    self.model.parameters(),
+                    self.train_config.gradient_clip,
+                )
+
+            self.optimizer.step()
+
+            total_loss += losses["total"].item()
+            total_recon += losses["recon"].item()
+            total_kl += losses["kl"].item()
+            total_global_rmsd += losses["global_rmsd"].item()
+            total_local_rmsd += losses["local_rmsd"].item()
+            num_samples += 1
+            self.state.global_step += 1
+
+            if self.state.global_step % self.train_config.log_every == 0:
+                self._log_step(losses)
+
+            if hasattr(sample_iter, 'set_postfix'):
+                sample_iter.set_postfix(
+                    loss=total_loss / num_samples,
+                    rmsd=total_global_rmsd / num_samples,
+                )
+
+        n = max(num_samples, 1)
+        return {
+            "loss": total_loss / n,
+            "recon": total_recon / n,
+            "kl": total_kl / n,
+            "global_rmsd": total_global_rmsd / n,
+            "local_rmsd": total_local_rmsd / n,
+            "samples": num_samples,
+        }
+
+    @torch.no_grad()
+    def _validate(self) -> dict[str, float]:
+        self.model.eval()
+
+        total_loss = 0.0
+        total_recon = 0.0
+        total_kl = 0.0
+        total_global_rmsd = 0.0
+        total_local_rmsd = 0.0
+        num_samples = 0
+
+        for sample in self.val_data:
+            if sample is None:
+                continue
+
+            sample = self._to_device(sample)
+
+            outputs = self.model(sample)
+
+            losses = self.loss_fn(
+                outputs["recon"],
+                sample.atom_coords,
+                outputs["mu"],
+                outputs["logvar"],
+                sample.residue_indices,
+                sample.atoms_per_residue,
+            )
+
+            total_loss += losses["total"].item()
+            total_recon += losses["recon"].item()
+            total_kl += losses["kl"].item()
+            total_global_rmsd += losses["global_rmsd"].item()
+            total_local_rmsd += losses["local_rmsd"].item()
+            num_samples += 1
+
+        n = max(num_samples, 1)
+        return {
+            "loss": total_loss / n,
+            "recon": total_recon / n,
+            "kl": total_kl / n,
+            "global_rmsd": total_global_rmsd / n,
+            "local_rmsd": total_local_rmsd / n,
+            "samples": num_samples,
+        }
+
+    def _check_improvement(self, val_loss: float) -> bool:
+        if val_loss < self.state.best_val_loss:
+            self.state.best_val_loss = val_loss
+            return True
+        return False
+
+    def _save_checkpoint(self, filename: str) -> None:
+        from pathlib import Path
+        checkpoint_dir = Path(self.train_config.checkpoint_dir)
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        path = checkpoint_dir / filename
+
+        torch.save(
+            {
+                "model_state_dict": self.model.state_dict(),
+                "optimizer_state_dict": self.optimizer.state_dict(),
+                "scheduler_state_dict": self.scheduler.state_dict(),
+                "epoch": self.state.epoch,
+                "global_step": self.state.global_step,
+                "best_val_loss": self.state.best_val_loss,
+                "vae_config": self.vae_config,
+                "train_config": self.train_config,
+            },
+            path,
+        )
+
+    def _log_step(self, losses: dict[str, torch.Tensor]) -> None:
+        if self.wandb:
+            self.wandb.log(
+                {
+                    "train/loss": losses["total"].item(),
+                    "train/recon": losses["recon"].item(),
+                    "train/kl": losses["kl"].item(),
+                    "train/global_rmsd": losses["global_rmsd"].item(),
+                    "train/local_rmsd": losses["local_rmsd"].item(),
+                    "train/kl_weight": losses["kl_weight"].item(),
+                    "train/step": self.state.global_step,
+                }
+            )
+
+    def _log_epoch(self, epoch: int, metrics: dict) -> None:
+        parts = [f"Epoch {epoch}"]
+        if "train" in metrics:
+            parts.append(f"loss={metrics['train']['loss']:.4f}")
+            parts.append(f"rmsd={metrics['train']['global_rmsd']:.3f}Å")
+        if "val" in metrics:
+            parts.append(f"val={metrics['val']['loss']:.4f}")
+        print(" | ".join(parts))
+
+        if self.wandb:
+            log_dict = {"epoch": epoch}
+            if "train" in metrics:
+                log_dict["train/epoch_loss"] = metrics["train"]["loss"]
+                log_dict["train/epoch_global_rmsd"] = metrics["train"]["global_rmsd"]
+                log_dict["train/epoch_local_rmsd"] = metrics["train"]["local_rmsd"]
+            if "val" in metrics:
+                log_dict["val/loss"] = metrics["val"]["loss"]
+                log_dict["val/global_rmsd"] = metrics["val"]["global_rmsd"]
+            self.wandb.log(log_dict)

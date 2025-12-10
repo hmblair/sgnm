@@ -186,3 +186,142 @@ class VAELoss(nn.Module):
             result["total"] = total + self.pairwise_weight * pairwise_loss
 
         return result
+
+
+def per_residue_rmsd(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    residue_indices: torch.Tensor,
+    atoms_per_residue: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Compute RMSD per residue (local geometry loss).
+
+    This encourages correct local atom arrangements within each residue.
+
+    Args:
+        pred: (A, 3) predicted all-atom coordinates
+        target: (A, 3) target all-atom coordinates
+        residue_indices: (A,) maps atom to residue index
+        atoms_per_residue: (N,) atoms per residue
+
+    Returns:
+        Mean per-residue RMSD
+    """
+    N = atoms_per_residue.size(0)
+    device = pred.device
+
+    total_rmsd = 0.0
+    n_valid = 0
+
+    offset = 0
+    for res_idx in range(N):
+        n_atoms = atoms_per_residue[res_idx].item()
+        if n_atoms < 2:
+            offset += n_atoms
+            continue
+
+        # Get atoms for this residue
+        pred_res = pred[offset:offset+n_atoms]
+        target_res = target[offset:offset+n_atoms]
+
+        # Compute RMSD for this residue (local alignment)
+        rmsd = kabsch_rmsd(pred_res, target_res)
+        total_rmsd += rmsd
+        n_valid += 1
+
+        offset += n_atoms
+
+    if n_valid == 0:
+        return torch.tensor(0.0, device=device)
+
+    return total_rmsd / n_valid
+
+
+class AllAtomVAELoss(nn.Module):
+    """
+    Combined VAE loss for all-atom structures.
+
+    Combines:
+    - Global RMSD (Kabsch alignment on all atoms)
+    - Local RMSD (per-residue alignment)
+    - KL divergence with warmup
+    """
+
+    def __init__(
+        self,
+        config: VAEConfig,
+        use_pairwise: bool = False,
+        pairwise_weight: float = 0.1,
+    ) -> None:
+        super().__init__()
+        self.config = config
+        self.use_pairwise = use_pairwise
+        self.pairwise_weight = pairwise_weight
+        self._epoch = 0
+
+    def set_epoch(self, epoch: int) -> None:
+        self._epoch = epoch
+
+    @property
+    def kl_weight(self) -> float:
+        if self._epoch >= self.config.kl_warmup_epochs:
+            return self.config.kl_weight
+        progress = self._epoch / max(self.config.kl_warmup_epochs, 1)
+        return self.config.kl_weight * progress
+
+    def forward(
+        self,
+        pred: torch.Tensor,
+        target: torch.Tensor,
+        mu: torch.Tensor,
+        logvar: torch.Tensor,
+        residue_indices: torch.Tensor,
+        atoms_per_residue: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+        """
+        Compute all-atom VAE loss.
+
+        Args:
+            pred: (A, 3) predicted all-atom coordinates
+            target: (A, 3) target all-atom coordinates
+            mu: (N, latent_dim) latent mean
+            logvar: (N, latent_dim) latent log variance
+            residue_indices: (A,) maps atom to residue
+            atoms_per_residue: (N,) atoms per residue
+
+        Returns:
+            Dictionary with loss components
+        """
+        # Global RMSD (all atoms)
+        global_rmsd = kabsch_rmsd(pred, target)
+
+        # Local RMSD (per-residue)
+        local_rmsd = per_residue_rmsd(
+            pred, target, residue_indices, atoms_per_residue
+        )
+
+        # Combined reconstruction loss
+        recon_loss = global_rmsd + self.config.local_rmsd_weight * local_rmsd
+
+        # KL divergence
+        kl_loss = kl_divergence(mu, logvar)
+
+        # Total loss
+        total = recon_loss + self.kl_weight * kl_loss
+
+        result = {
+            "total": total,
+            "recon": recon_loss,
+            "global_rmsd": global_rmsd,
+            "local_rmsd": local_rmsd,
+            "kl": kl_loss,
+            "kl_weight": torch.tensor(self.kl_weight, device=pred.device),
+        }
+
+        if self.use_pairwise:
+            pairwise_loss = pairwise_distance_loss(pred, target)
+            result["pairwise"] = pairwise_loss
+            result["total"] = total + self.pairwise_weight * pairwise_loss
+
+        return result

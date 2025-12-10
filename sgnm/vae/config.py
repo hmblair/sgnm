@@ -41,3 +41,22 @@ class VAEConfig:
 
     coord_update_init_scale: float = 1e-3
     """Scale for initializing coordinate update weights (smaller = more stable)."""
+
+    # All-atom VAE parameters
+    num_atom_types: int = 149
+    """Number of unique atom types from ciffy (max index is 148)."""
+
+    num_atom_encoder_layers: int = 3
+    """Number of EGNN layers for atom-level encoding."""
+
+    num_residue_decoder_layers: int = 3
+    """Number of EGNN layers for residue-level decoding."""
+
+    num_atom_decoder_layers: int = 2
+    """Number of EGNN layers for atom-level refinement."""
+
+    atom_cutoff: float = 5.0
+    """Distance cutoff for atom-level graph edges (Angstroms)."""
+
+    local_rmsd_weight: float = 0.1
+    """Weight for per-residue local RMSD loss."""
