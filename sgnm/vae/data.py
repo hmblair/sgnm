@@ -343,7 +343,7 @@ class AllAtomDataset:
         self, chain: ciffy.Polymer, filename: str
     ) -> AllAtomStructureSample | None:
         """Process a single RNA chain into an AllAtomStructureSample."""
-        stripped = chain.frame().strip()
+        stripped = chain.strip()  # All atoms, not just frame atoms
 
         if stripped.empty():
             return None

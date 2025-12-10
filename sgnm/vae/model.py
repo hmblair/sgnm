@@ -283,7 +283,7 @@ class AllAtomStructureVAE(nn.Module):
 
         # Reconstruction with Polymer output
         polymer = model.reconstruct_polymer(sample)
-        polymer.write("reconstructed.pdb")
+        polymer.write("reconstructed.cif")
 
         # Ball sampling around reference
         polymers = model.sample_around_reference(sample, num_samples=10)
