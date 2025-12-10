@@ -33,7 +33,7 @@ class VAEConfig:
     kl_warmup_epochs: int = 10
     """Number of epochs to warmup KL weight from 0 to target."""
 
-    use_frames: bool = True
+    use_frames: bool = False
     """Whether to use local coordinate frames as additional input features."""
 
     center_coords: bool = True

@@ -214,9 +214,19 @@ class VAETrainer:
         Returns:
             TrainResults with training history
         """
+        try:
+            from tqdm import tqdm
+            use_tqdm = True
+        except ImportError:
+            use_tqdm = False
+
         history = []
 
-        for epoch in range(self.train_config.max_epochs):
+        epoch_iter = range(self.train_config.max_epochs)
+        if use_tqdm:
+            epoch_iter = tqdm(epoch_iter, desc="Training", unit="epoch")
+
+        for epoch in epoch_iter:
             self.state.epoch = epoch
             self.loss_fn.set_epoch(epoch)
 
@@ -249,6 +259,15 @@ class VAETrainer:
             # Logging
             self._log_epoch(epoch, history[-1])
 
+            # Update tqdm description with metrics
+            if use_tqdm:
+                desc = f"Epoch {epoch}"
+                if "train" in history[-1]:
+                    desc += f" | loss={history[-1]['train']['loss']:.4f}"
+                if "val" in history[-1]:
+                    desc += f" | val={history[-1]['val']['loss']:.4f}"
+                epoch_iter.set_postfix_str(desc.split(" | ", 1)[-1] if " | " in desc else "")
+
         return TrainResults(
             best_val_loss=self.state.best_val_loss,
             final_epoch=self.state.epoch,
@@ -265,7 +284,18 @@ class VAETrainer:
         total_kl = 0.0
         num_samples = 0
 
-        for sample in self.train_data:
+        try:
+            from tqdm import tqdm
+            sample_iter = tqdm(
+                self.train_data,
+                desc=f"  Epoch {self.state.epoch}",
+                leave=False,
+                unit="sample",
+            )
+        except ImportError:
+            sample_iter = self.train_data
+
+        for sample in sample_iter:
             sample = self._to_device(sample)
 
             self.optimizer.zero_grad()
@@ -303,6 +333,13 @@ class VAETrainer:
             # Step logging
             if self.state.global_step % self.train_config.log_every == 0:
                 self._log_step(losses)
+
+            # Update sample progress bar
+            if hasattr(sample_iter, 'set_postfix'):
+                sample_iter.set_postfix(
+                    loss=total_loss / num_samples,
+                    recon=total_recon / num_samples,
+                )
 
         n = max(num_samples, 1)
         return {

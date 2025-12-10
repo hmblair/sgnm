@@ -11,41 +11,8 @@ import os
 import torch
 import ciffy
 
-from ..config import FRAME1, FRAME2, FRAME3, NUCLEOTIDE_DICT
 from ..data import tokenize
 from .training import StructureSample
-
-
-def _base_frame(poly: ciffy.Polymer) -> torch.Tensor:
-    """
-    Extract local coordinate frames from nucleobase C2-C4-C6 atoms.
-
-    Args:
-        poly: ciffy Polymer object
-
-    Returns:
-        (N, 3, 3) local frame matrices
-    """
-    from ..gnm import _local_frame
-
-    seq = poly.str()
-    nuc_map = {"A": 0, "C": 1, "G": 2, "U": 3, "T": 3}
-
-    N = poly.size(ciffy.RESIDUE)
-    coords = poly.coordinates.view(N, -1, 3)
-
-    frame1_idx = torch.tensor([FRAME1[nuc_map.get(s, 0)] for s in seq])
-    frame2_idx = torch.tensor([FRAME2[nuc_map.get(s, 0)] for s in seq])
-    frame3_idx = torch.tensor([FRAME3[nuc_map.get(s, 0)] for s in seq])
-
-    c2 = coords[torch.arange(N), frame1_idx]
-    c4 = coords[torch.arange(N), frame2_idx]
-    c6 = coords[torch.arange(N), frame3_idx]
-
-    v1 = c4 - c2
-    v2 = c6 - c2
-
-    return _local_frame(v1, v2)
 
 
 @dataclass
@@ -63,9 +30,6 @@ class StructureDataConfig:
 
     max_chains: int = 1
     """Maximum number of chains per structure."""
-
-    include_frames: bool = True
-    """Whether to compute local coordinate frames."""
 
     train_split: float = 0.8
     """Fraction of data for training."""
@@ -204,20 +168,11 @@ class StructureOnlyDataset:
         seq_str = stripped.str()
         node_types = tokenize(seq_str)
 
-        # Optionally compute frames
-        frames = None
-        if self.config.include_frames:
-            try:
-                frames = _base_frame(stripped)
-            except Exception:
-                # Frames may fail for some structures
-                pass
-
         return StructureSample(
             name=f"{filename}:{chain.id(0)}",
             coords=coords,
             node_types=node_types,
-            frames=frames,
+            frames=None,
         )
 
     def __iter__(self) -> Iterator[StructureSample]:
@@ -240,19 +195,16 @@ class StructureListDataset:
         file_paths: list[str],
         max_length: int = 500,
         min_length: int = 10,
-        include_frames: bool = True,
     ) -> None:
         """
         Args:
             file_paths: List of paths to structure files
             max_length: Maximum residue count
             min_length: Minimum residue count
-            include_frames: Whether to compute local frames
         """
         self.file_paths = file_paths
         self.max_length = max_length
         self.min_length = min_length
-        self.include_frames = include_frames
 
     def __len__(self) -> int:
         return len(self.file_paths)
@@ -276,18 +228,11 @@ class StructureListDataset:
                 _, coords = stripped.center(ciffy.RESIDUE)
                 node_types = tokenize(stripped.str())
 
-                frames = None
-                if self.include_frames:
-                    try:
-                        frames = _base_frame(stripped)
-                    except Exception:
-                        pass
-
                 return StructureSample(
                     name=Path(path).stem,
                     coords=coords,
                     node_types=node_types,
-                    frames=frames,
+                    frames=None,
                 )
 
             return None
