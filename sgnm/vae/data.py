@@ -343,9 +343,14 @@ class AllAtomDataset:
         self, chain: ciffy.Polymer, filename: str
     ) -> AllAtomStructureSample | None:
         """Process a single RNA chain into an AllAtomStructureSample."""
-        stripped = chain.strip()  # All atoms, not just frame atoms
+        # Strip unresolved residues and filter out unknown atom types
+        stripped = chain.strip().polymer_only()
 
         if stripped.empty():
+            return None
+
+        # Verify no invalid atom types remain (must be in [0, 148])
+        if (stripped.atoms < 0).any() or (stripped.atoms > 148).any():
             return None
 
         n_residues = stripped.size(ciffy.RESIDUE)
