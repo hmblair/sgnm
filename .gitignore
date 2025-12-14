@@ -4,3 +4,7 @@ dist/
 *egg-info
 .DS_Store
 checkpoints/
+
+# Generated outputs
+orig.cif
+new.cif

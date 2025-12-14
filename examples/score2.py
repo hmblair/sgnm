@@ -5,12 +5,12 @@ import sgnm
 # Load the polymer
 
 file = "structures/9GBZ.cif"
-poly = ciffy.load(file)
+poly = ciffy.load(file, backend="torch")
 
 # Get the RNA (chain D)
 
 ix = 3
-rna = poly.select(ix).strip()
+rna = poly.by_index(ix).strip()
 
 # Generate a random SHAPE profile
 

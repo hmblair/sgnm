@@ -147,7 +147,7 @@ class HDF5Dataset:
         path = os.path.join(self.config.structures_dir, filename)
 
         try:
-            poly = ciffy.load(path)
+            poly = ciffy.load(path, backend="torch")
 
             # Filter by chain count
             if poly.size(ciffy.CHAIN) > self.config.max_chains:
@@ -172,7 +172,7 @@ class HDF5Dataset:
         if cid not in self.reactivity_data:
             return None
 
-        stripped = chain.frame().strip()
+        stripped = chain.strip()
         if stripped.empty():
             return None
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 import torch
-from ciffy.enum import Adenosine, Cytosine, Guanosine, Uridine
+from ciffy.biochemistry import Residue
 
 
 # =============================================================================
@@ -13,24 +13,24 @@ from ciffy.enum import Adenosine, Cytosine, Guanosine, Uridine
 # =============================================================================
 
 FRAME1 = torch.tensor([
-    Adenosine.C2.value,
-    Cytosine.C2.value,
-    Guanosine.C2.value,
-    Uridine.C2.value,
+    Residue.A.C2.value,
+    Residue.C.C2.value,
+    Residue.G.C2.value,
+    Residue.U.C2.value,
 ])
 
 FRAME2 = torch.tensor([
-    Adenosine.C4.value,
-    Cytosine.C4.value,
-    Guanosine.C4.value,
-    Uridine.C4.value,
+    Residue.A.C4.value,
+    Residue.C.C4.value,
+    Residue.G.C4.value,
+    Residue.U.C4.value,
 ])
 
 FRAME3 = torch.tensor([
-    Adenosine.C6.value,
-    Cytosine.C6.value,
-    Guanosine.C6.value,
-    Uridine.C6.value,
+    Residue.A.C6.value,
+    Residue.C.C6.value,
+    Residue.G.C6.value,
+    Residue.U.C6.value,
 ])
 
 FRAMES = torch.cat([FRAME1, FRAME2, FRAME3])

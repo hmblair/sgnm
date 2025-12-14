@@ -48,20 +48,6 @@ from .training import Trainer, train_sgnm, TrainResults
 # Data
 from .data import HDF5Dataset, Sample, ProfileLoader, tokenize
 
-# VAE
-from . import vae
-from .vae import (
-    VAEConfig,
-    VAETrainConfig,
-    StructureVAE,
-    VAELoss,
-    VAETrainer,
-    train_vae,
-    StructureOnlyDataset,
-    StructureDataConfig,
-)
-
-
 # =============================================================================
 # Convenience Functions
 # =============================================================================

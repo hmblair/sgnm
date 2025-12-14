@@ -38,11 +38,11 @@ if __name__ == "__main__":
 
     # Load and preprocess
 
-    poly = ciffy.load(args.file)
+    poly = ciffy.load(args.file, backend="torch")
     if args.chain is not None:
-        poly = poly.select(args.chain)
+        poly = poly.by_index(args.chain)
 
-    poly = poly.subset(ciffy.RNA)
+    poly = poly.by_type(ciffy.RNA)
     n = poly.size(ciffy.RESIDUE)
 
     if n == 0:

@@ -26,9 +26,9 @@ def _base_frame(poly: ciffy.Polymer) -> torch.Tensor:
     """
     Get pairwise base orientations based on the C2-C4-C6 frame.
     """
-    poly1 = poly.get_by_name(FRAME1)
-    poly2 = poly.get_by_name(FRAME2)
-    poly3 = poly.get_by_name(FRAME3)
+    poly1 = poly.by_atom(FRAME1)
+    poly2 = poly.by_atom(FRAME2)
+    poly3 = poly.by_atom(FRAME3)
 
     diff1 = poly1.coordinates - poly2.coordinates
     diff2 = poly1.coordinates - poly3.coordinates
@@ -83,7 +83,6 @@ class BaseSGNM(nn.Module):
         Returns:
             Normalized variance predictions
         """
-        poly = poly.frame()
         _, coords = poly.center(ciffy.RESIDUE)
         return self(coords)
 
@@ -193,7 +192,7 @@ class SGNM(BaseSGNM):
         Returns:
             Normalized variance predictions
         """
-        poly = poly.frame().strip()
+        poly = poly.strip()
         poly, coords = poly.center(ciffy.RESIDUE)
         frames = _base_frame(poly)
 

@@ -66,7 +66,7 @@ class RelaxResult:
     final_score: float
     """Final score after relaxation."""
 
-    def save(self, path: str | Path, format: str = "pdb") -> None:
+    def save(self, path: str | Path) -> None:
         """Save relaxed structure to file."""
         self.relaxed.write(str(path))
 
@@ -255,7 +255,7 @@ class StructureScorer:
         Returns:
             ScoringResult with score, prediction, and metadata
         """
-        poly = ciffy.load(str(cif_path))
+        poly = ciffy.load(str(cif_path), backend="torch")
         result = self.score_polymer(target_profile, poly)
         result.metadata["path"] = str(cif_path)
         result.metadata["name"] = Path(cif_path).stem
