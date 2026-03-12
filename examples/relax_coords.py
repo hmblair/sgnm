@@ -1,3 +1,10 @@
+"""
+Coordinate-space relaxation.
+
+Optimizes atom coordinates directly to match a target reactivity profile,
+while regularizing with RMSD to stay close to the original structure.
+"""
+
 import ciffy
 import torch
 import torch.nn as nn
@@ -18,7 +25,7 @@ residues = rna.size(ciffy.RESIDUE)
 
 # Init the objective
 
-module = sgnm.SGNM.load("../checkpoints/weights.pth")
+module = sgnm.SGNM.load()
 
 # Init the profile
 
@@ -35,35 +42,35 @@ profile_exp[24] = 1.0
 
 # profile_exp[16] = 0.0
 
-# Relax via dihedral optimization
+# Relax via coordinate optimization
 
 steps = 1000
 lr = 1e-3
-alpha = 0.01
+alpha = 0.001  # RMSD regularization weight
 
 # Create a copy for relaxation
 relaxed = deepcopy(rna)
 
 
-# Dihedral optimization model - only backbone + glycosidic dihedrals
-class DihedralModel(nn.Module):
-    def __init__(self, init_dihedrals):
+# Coordinate optimization model
+class CoordinateModel(nn.Module):
+    def __init__(self, init_coords):
         super().__init__()
-        self.dihedrals = nn.Parameter(init_dihedrals.clone())
+        self.coords = nn.Parameter(init_coords.clone())
 
 
-model = DihedralModel(relaxed.dihedral(ciffy.RNA_BACKBONE))
+model = CoordinateModel(relaxed.coordinates)
 optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
-print(f"Optimizing {len(model.dihedrals)} backbone dihedrals")
+print(f"Optimizing {model.coords.numel()} coordinate values ({model.coords.shape[0]} atoms)")
 print(f"{'Step':>5} {'MSE':>10} {'RMSD':>10}")
 print("-" * 30)
 
 for step in range(steps):
     optimizer.zero_grad()
 
-    # Apply current dihedrals to structure (only backbone)
-    relaxed.set_dihedral(ciffy.RNA_BACKBONE, model.dihedrals)
+    # Apply current coordinates to structure
+    relaxed.coordinates = model.coords
 
     # Compute score against target profile
     pred = module.ciffy(relaxed)
@@ -85,12 +92,15 @@ with torch.no_grad():
     profile_new = module.ciffy(relaxed).detach()
 
 rna.write("orig.cif")
-relaxed.write("new.cif")
+relaxed.write("new_coords.cif")
 
 plt.plot(profile, color="red", alpha=0.5, label="Original")
 plt.plot(profile_new, color="blue", alpha=0.5, label="Modified")
 plt.legend(fontsize=13)
 plt.xlabel("Residue", fontsize=13)
 plt.ylabel("Normalized Reactivity", fontsize=13)
+plt.savefig("profile_comparison_coords.png", dpi=150)
 plt.show()
 plt.close()
+
+print(f"\nFinal RMSD from original: {ciffy.rmsd(rna, relaxed).item():.3f} A")
