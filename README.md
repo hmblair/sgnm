@@ -1,41 +1,30 @@
 # SGNM
 
-SHAPE Gaussian Network Model for predicting SHAPE profiles of RNA tertiary structures.
+Predict RNA chemical probing reactivity from 3D structure.
 
 ## Overview
 
-`sgnm` is a PyTorch module for predicting SHAPE profiles of RNA tertiary structures in a fast and differentiable manner. It uses a Gaussian Network Model approach with learnable radial basis function embeddings.
+`sgnm` predicts SHAPE and DMS reactivity profiles from RNA tertiary structures. It provides two model architectures:
+
+- **SGNM**: Gaussian Network Model with learnable radial basis function embeddings. Uses distance and base orientation pathways with GNM variance computation (delegated to [ciffy](https://github.com/hmblair/ciffy)).
+- **EquivariantReactivityModel**: SO(3)-equivariant transformer using [flash-eq](https://github.com/hmblair/flash-eq). Operates at the atom level with k-NN graphs and reduces to per-residue predictions.
+
+Both models are fast, differentiable, and accept [ciffy](https://github.com/hmblair/ciffy) `Polymer` objects directly.
 
 ## Installation
 
-Clone the repo, install the requirements, and then install the module.
 ```bash
 git clone https://github.com/hmblair/sgnm
 cd sgnm
-pip install -r requirements.txt
-pip install .
-```
+pip install -e .
 
-Download the pre-trained weights:
-```bash
-curl -L "https://www.dropbox.com/scl/fi/5f808uvbfaxllnxov8cr5/weights.pth?rlkey=t8utsyfgplmfip1jnnggrd3y3&st=jxwukwj7&dl=0" --output weights.pth
+# For the equivariant model (requires CUDA):
+pip install -e '.[equivariant]'
 ```
 
 ## Quick Start
 
-### Command Line
-
-Predict SHAPE profile for a single molecule:
-```bash
-python -m sgnm --weights weights.pth mol.cif
-```
-
-Save output to HDF5:
-```bash
-python -m sgnm --weights weights.pth --out profile.h5 mol.cif
-```
-
-### Python API
+### SGNM Model
 
 ```python
 from sgnm import SGNM
@@ -43,32 +32,29 @@ from sgnm import SGNM
 # Load pre-trained model
 model = SGNM.load("weights.pth")
 
-# Or use non-parametric model
+# Or use non-parametric baseline
 model = SGNM.load()
 
-# Predict from coordinates and frames
+# Predict from ciffy Polymer
+profile = model.ciffy(polymer)
+
+# Or from raw tensors (coords: (N, 3), frames: (N, 3, 3))
 profile = model(coords, frames)
 ```
 
-## Usage
+Frames are formed by the C2-C4-C6 atom triplet.
 
-### Profile Prediction
+### Equivariant Model
 
 ```python
-from sgnm import SGNM
+import sgnm
 
-model = SGNM.load("weights.pth")
+# Requires flash-eq (CUDA)
+model = sgnm.equivariant(embed_dim=32, hidden_layers=4, k_neighbors=16)
 
-# From raw tensors
-# coords: shape (..., n, 3) - residue center coordinates
-# frames: shape (..., n, 3, 3) - local coordinate frames
-profile = model(coords, frames)
-
-# From ciffy Polymer
-profile = model.ciffy(polymer)
+# Takes Polymer directly, returns (n_residues, 2) for [SHAPE, DMS]
+predictions = model(polymer)
 ```
-
-The frames are formed by the `C2-C4-C6` atom triplet, and coordinates are the center of these triplets.
 
 ### Scoring
 
@@ -97,31 +83,10 @@ scorer = sgnm.score("weights.pth")
 relaxed = scorer.relax(target_profile, polymer, steps=100)
 ```
 
-## Advanced Usage (v1.1.0+)
-
-### Configuration
-
-Use dataclasses for type-safe configuration:
+## Training
 
 ```python
-from sgnm import ModelConfig, SGNM
-
-# Configure model architecture
-config = ModelConfig(dim=64, out_dim=1, layers=2)
-model = SGNM(config)
-```
-
-### Training
-
-Train models with the new `Trainer` class:
-
-```python
-from sgnm import (
-    train_sgnm,
-    ModelConfig,
-    DataConfig,
-    TrainConfig,
-)
+from sgnm import train_sgnm, ModelConfig, DataConfig, TrainConfig
 
 results = train_sgnm(
     model_config=ModelConfig(dim=32, layers=2),
@@ -131,12 +96,14 @@ results = train_sgnm(
     ),
     train_config=TrainConfig(
         learning_rate=1e-3,
+        weight_decay=0.01,          # Use AdamW
+        loss_type="correlation",    # "mae", "mse", or "correlation"
+        warmup_epochs=1.0,          # Cosine schedule with warmup
+        min_lr_ratio=0.1,
+        accumulation_steps=4,       # Gradient accumulation
         max_epochs=100,
-        checkpoint_dir="./checkpoints",
     ),
 )
-
-print(f"Best validation loss: {results.best_val_loss:.4f}")
 ```
 
 ### Batch Scoring
@@ -216,28 +183,24 @@ print(f"Final score: {result.final_score:.4f}")
 
 ```
 sgnm/
-├── config.py      # Configuration dataclasses
-├── nn.py          # Neural network layers (RBF, DenseNetwork)
-├── models.py      # SGNM and BaseSGNM models
-├── scoring.py     # Scoring, batch scoring, relaxation
-├── training.py    # Training infrastructure
-├── data.py        # Dataset utilities
-└── gnm.py         # Core GNM mathematical functions
+├── models.py        # SGNM and BaseSGNM models
+├── equivariant.py   # EquivariantReactivityModel (flash-eq)
+├── gnm.py           # Geometry utilities (frames, orientation scoring)
+├── nn.py            # Neural network layers (RBF, DenseNetwork)
+├── losses.py        # MAE, MSE, correlation loss functions
+├── schedulers.py    # Cosine schedule with warmup
+├── scoring.py       # Scoring, batch scoring, relaxation
+├── training.py      # Training infrastructure
+├── data.py          # Dataset utilities
+└── config.py        # Configuration dataclasses
 ```
-
-## Examples
-
-See the `examples/` directory:
-- `score1.py` - Scoring with raw coordinates
-- `score2.py` - Scoring with ciffy Polymer
-- `relax.py` - Structure relaxation
 
 ## Version History
 
-- **v1.1.0** - Refactored for separation of concerns, added training infrastructure, batch scoring
-- **v1.0.0** - Initial stable release
+- **v2.0.0** - Refactored GNM math to use ciffy; added EquivariantReactivityModel; cosine schedule, correlation loss, AdamW, gradient accumulation
+- **v1.1.0** - Training infrastructure, batch scoring, structure relaxation
+- **v1.0.0** - Initial release
 
 ## Contact
 
 Email: `hmblair@stanford.edu`
-Slack: `@Hamish` (Stanford workspace)
