@@ -18,6 +18,7 @@ setup(
     install_requires=[
         'torch>=2.0',
         'ciffy',
+        'dlu',
     ],
     extras_require={
         'equivariant': ['flash-eq>=0.1.0'],
