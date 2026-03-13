@@ -13,6 +13,8 @@ import matplotlib.pyplot as plt
 from .config import TrainConfig, DataConfig, ModelConfig
 from .models import SGNM, BaseSGNM
 from .data import HDF5Dataset, Sample
+from .losses import mae_loss, mse_loss, correlation_loss
+from .schedulers import get_cosine_schedule_with_warmup
 
 
 def _normalize(x: torch.Tensor) -> torch.Tensor:
@@ -83,11 +85,38 @@ class Trainer:
 
         self.state = TrainState()
 
-        # Setup optimizer
-        self.optimizer = torch.optim.Adam(
-            model.parameters(),
-            lr=config.learning_rate,
-        )
+        # Setup optimizer (AdamW if weight_decay > 0, else Adam)
+        if config.weight_decay > 0:
+            self.optimizer = torch.optim.AdamW(
+                model.parameters(),
+                lr=config.learning_rate,
+                weight_decay=config.weight_decay,
+            )
+        else:
+            self.optimizer = torch.optim.Adam(
+                model.parameters(),
+                lr=config.learning_rate,
+            )
+
+        # Setup scheduler
+        self.scheduler = None
+        if config.warmup_epochs > 0:
+            num_samples = len(train_data) if hasattr(train_data, '__len__') else 100
+            num_training_steps = num_samples * config.max_epochs
+            num_warmup_steps = int(num_samples * config.warmup_epochs)
+            self.scheduler = get_cosine_schedule_with_warmup(
+                self.optimizer,
+                num_warmup_steps=num_warmup_steps,
+                num_training_steps=num_training_steps,
+                min_lr_ratio=config.min_lr_ratio,
+            )
+
+        # Setup loss function
+        self._loss_fn = {
+            "mae": mae_loss,
+            "mse": mse_loss,
+            "correlation": correlation_loss,
+        }[config.loss_type]
 
         # Setup logging
         self._setup_logging()
@@ -165,11 +194,11 @@ class Trainer:
 
         epoch_loss = 0.0
         num_samples = 0
+        accum = self.config.accumulation_steps
 
-        for sample in self.train_data:
-            # Zero gradients
-            self.optimizer.zero_grad()
+        self.optimizer.zero_grad()
 
+        for i, sample in enumerate(self.train_data):
             # Forward pass
             pred = self.model.ciffy(sample.polymer, sample.sequence)
 
@@ -192,32 +221,33 @@ class Trainer:
             # Compute loss (only on valid positions)
             mask = sample.mask
             if mask.size(0) != pred.size(0):
-                # Size mismatch - skip this sample
                 continue
 
-            loss = torch.abs(pred[mask] - target[mask]).mean()
+            loss = self._loss_fn(pred[mask], target[mask]) / accum
 
-            # Backward pass (THE CRITICAL FIX!)
             loss.backward()
 
-            # Gradient clipping
-            if self.config.gradient_clip:
-                torch.nn.utils.clip_grad_norm_(
-                    self.model.parameters(),
-                    self.config.gradient_clip,
-                )
+            # Step after accumulation
+            if (i + 1) % accum == 0 or (i + 1) == len(self.train_data) if hasattr(self.train_data, '__len__') else True:
+                if self.config.gradient_clip:
+                    torch.nn.utils.clip_grad_norm_(
+                        self.model.parameters(),
+                        self.config.gradient_clip,
+                    )
 
-            # Optimizer step (THE CRITICAL FIX!)
-            self.optimizer.step()
+                self.optimizer.step()
+                if self.scheduler is not None:
+                    self.scheduler.step()
+                self.optimizer.zero_grad()
 
             # Accumulate metrics
-            epoch_loss += loss.item()
+            epoch_loss += loss.item() * accum
             num_samples += 1
             self.state.global_step += 1
 
             # Logging
             if self.state.global_step % self.config.log_every == 0:
-                self._log_step(loss.item())
+                self._log_step(loss.item() * accum)
 
             # Visualization
             if (self.config.visualize_every > 0 and

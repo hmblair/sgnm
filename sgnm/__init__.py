@@ -31,6 +31,10 @@ from .config import (
 # Neural Network Layers
 from .nn import RadialBasisFunctions, DenseNetwork
 
+# Loss Functions and Schedulers
+from .losses import pearson_correlation, mae_loss, mse_loss, correlation_loss
+from .schedulers import get_cosine_schedule_with_warmup
+
 # Scoring
 from .scoring import (
     Score,
@@ -51,6 +55,12 @@ from .data import HDF5Dataset, Sample, ProfileLoader, tokenize
 # =============================================================================
 # Convenience Functions
 # =============================================================================
+
+def equivariant(**kwargs) -> "EquivariantReactivityModel":
+    """Create an EquivariantReactivityModel. Requires flash-eq."""
+    from .equivariant import EquivariantReactivityModel
+    return EquivariantReactivityModel(**kwargs)
+
 
 def load(path: str | None = None) -> BaseSGNM:
     """

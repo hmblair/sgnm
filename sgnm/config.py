@@ -113,8 +113,23 @@ class TrainConfig:
     learning_rate: float = 1e-2
     """Learning rate for optimizer."""
 
+    weight_decay: float = 0.0
+    """Weight decay for AdamW. Set > 0 to use AdamW instead of Adam."""
+
     max_epochs: int = 100
     """Maximum number of training epochs."""
+
+    loss_type: Literal["mae", "mse", "correlation"] = "mae"
+    """Loss function to use."""
+
+    warmup_epochs: float = 0.0
+    """Number of warmup epochs for cosine schedule (0 to disable)."""
+
+    min_lr_ratio: float = 0.1
+    """Minimum LR as fraction of initial LR (for cosine schedule)."""
+
+    accumulation_steps: int = 1
+    """Gradient accumulation steps."""
 
     eval_only: bool = False
     """If True, run validation only without optimization."""
