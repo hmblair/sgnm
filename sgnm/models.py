@@ -83,6 +83,7 @@ class BaseSGNM(nn.Module):
         Returns:
             Normalized variance predictions
         """
+        poly = poly.torch()
         _, coords = poly.center(ciffy.RESIDUE)
         return self(coords)
 
@@ -192,7 +193,7 @@ class SGNM(BaseSGNM):
         Returns:
             Normalized variance predictions
         """
-        poly = poly.strip()
+        poly = poly.torch().strip()
         poly, coords = poly.center(ciffy.RESIDUE)
         frames = _base_frame(poly)
 
