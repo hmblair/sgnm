@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 
 from .config import TrainConfig, DataConfig, ModelConfig
 from .models import SGNM, BaseSGNM
-from .data import HDF5Dataset, Sample
+from .data import ReactivityDataset, Sample
 from .losses import mae_loss, mse_loss, correlation_loss
 from .schedulers import get_cosine_schedule_with_warmup
 
@@ -66,8 +66,8 @@ class Trainer:
         self,
         model: BaseSGNM,
         config: TrainConfig,
-        train_data: HDF5Dataset | Iterator[Sample],
-        val_data: HDF5Dataset | Iterator[Sample] | None = None,
+        train_data: ReactivityDataset | Iterator[Sample],
+        val_data: ReactivityDataset | Iterator[Sample] | None = None,
     ) -> None:
         """
         Initialize trainer.
@@ -199,15 +199,13 @@ class Trainer:
         self.optimizer.zero_grad()
 
         for i, sample in enumerate(self.train_data):
-            # Forward pass
-            pred = self.model.ciffy(sample.polymer, sample.sequence)
+            sample = sample.to(self.config.device)
 
-            # Trim predictions to match reactivity if needed
-            trim = getattr(self.train_data, 'config', None)
-            if trim and hasattr(trim, 'trim_ends') and trim.trim_ends > 0:
-                t = trim.trim_ends
-                if pred.size(0) > 2 * t:
-                    pred = pred[t:-t]
+            # Forward pass
+            try:
+                pred = self.model.ciffy(sample.polymer)
+            except (ValueError, RuntimeError):
+                continue
 
             # Normalize predictions
             pred = _normalize(pred)
@@ -265,7 +263,12 @@ class Trainer:
         num_samples = 0
 
         for sample in self.val_data:
-            pred = self.model.ciffy(sample.polymer, sample.sequence)
+            sample = sample.to(self.config.device)
+
+            try:
+                pred = self.model.ciffy(sample.polymer)
+            except (ValueError, RuntimeError):
+                continue
 
             # Normalize
             pred = _normalize(pred)
@@ -400,9 +403,34 @@ def train_sgnm(
 
     print(f"Model parameters: {sum(p.numel() for p in model.parameters())}")
 
-    # Create datasets
-    train_dataset = HDF5Dataset(data_config, split="train")
-    val_dataset = HDF5Dataset(data_config, split="val")
+    # Build reactivity index and structure dataset
+    from ciffy.biochemistry import Scale, Molecule
+    from ciffy.nn import PolymerDataset
+    from .data import load_reactivity_index, ReactivityDataset
+
+    index = load_reactivity_index(
+        data_config.reactivity_path,
+        data_config.fasta_path,
+        data_config.data_format,
+    )
+
+    structures = PolymerDataset(
+        data_config.structures_dir,
+        scale=Scale.CHAIN,
+        molecule_types=Molecule.RNA,
+        max_chains=data_config.max_chains,
+    )
+    splits = structures.split(
+        train=data_config.train_split,
+        val=data_config.val_split,
+        test=data_config.test_split,
+        seed=seed,
+    )
+    train_structures = splits[0]
+    val_structures = splits[1] if len(splits) > 1 else None
+
+    train_dataset = ReactivityDataset(train_structures, index)
+    val_dataset = ReactivityDataset(val_structures, index) if val_structures else None
 
     print(f"Training samples: {len(train_dataset)}")
     print(f"Validation samples: {len(val_dataset)}")

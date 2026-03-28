@@ -5,13 +5,37 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 import ciffy
+from ciffy.biochemistry.constants import PurineBase, PyrimidineBase
+from ciffy.biochemistry.atom import AtomGroup
+from ciffy.biochemistry.linking import FrameDefinition
+from ciffy.operations.frames import gather
+from ciffy.geometry.transforms import frame_from_positions
 
 from .nn import RadialBasisFunctions, DenseNetwork
-from .config import ModelConfig, FRAME1, FRAME2, FRAME3
+from .config import ModelConfig
 from .gnm import (
     _gnm_variances,
     _orientation_score,
-    _local_frame,
+)
+
+# Unified C2/C4/C6 atom groups across purines and pyrimidines
+_NucleobaseC2 = AtomGroup(
+    "NucleobaseC2",
+    {**PurineBase.C2._members, **PyrimidineBase.C2._members},
+)
+_NucleobaseC4 = AtomGroup(
+    "NucleobaseC4",
+    {**PurineBase.C4._members, **PyrimidineBase.C4._members},
+)
+_NucleobaseC6 = AtomGroup(
+    "NucleobaseC6",
+    {**PurineBase.C6._members, **PyrimidineBase.C6._members},
+)
+
+NUCLEOBASE_FRAME = FrameDefinition(
+    origin=_NucleobaseC2,
+    axis_ref=_NucleobaseC4,
+    plane_ref=_NucleobaseC6,
 )
 
 
@@ -23,16 +47,14 @@ def _normalize(x: torch.Tensor) -> torch.Tensor:
 
 
 def _base_frame(poly: ciffy.Polymer) -> torch.Tensor:
-    """
-    Get pairwise base orientations based on the C2-C4-C6 frame.
-    """
-    poly1 = poly.atom_type(FRAME1)
-    poly2 = poly.atom_type(FRAME2)
-    poly3 = poly.atom_type(FRAME3)
-
-    diff1 = poly1.coordinates - poly2.coordinates
-    diff2 = poly1.coordinates - poly3.coordinates
-    return _local_frame(diff1, diff2)
+    """Get per-residue C2-C4-C6 nucleobase frames."""
+    positions = gather(poly, [
+        NUCLEOBASE_FRAME.origin,
+        NUCLEOBASE_FRAME.axis_ref,
+        NUCLEOBASE_FRAME.plane_ref,
+    ])
+    _, R = frame_from_positions(positions)
+    return R
 
 
 class BaseSGNM(nn.Module):
@@ -155,7 +177,6 @@ class SGNM(BaseSGNM):
         self: SGNM,
         coords: torch.Tensor,
         frames: torch.Tensor | None = None,
-        sequence: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """
         Compute predictions from coordinates and optional frames.
@@ -163,7 +184,6 @@ class SGNM(BaseSGNM):
         Args:
             coords: Residue center coordinates, shape (N, 3)
             frames: Local coordinate frames, shape (N, 3, 3)
-            sequence: Tokenized sequence (currently unused)
 
         Returns:
             Normalized variance predictions, shape (N,)
@@ -181,14 +201,12 @@ class SGNM(BaseSGNM):
     def ciffy(
         self: SGNM,
         poly: ciffy.Polymer,
-        sequence: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """
         Compute predictions from a ciffy Polymer object.
 
         Args:
             poly: RNA polymer structure
-            sequence: Tokenized sequence (optional)
 
         Returns:
             Normalized variance predictions
@@ -197,7 +215,7 @@ class SGNM(BaseSGNM):
         poly, coords = poly.center(ciffy.RESIDUE)
         frames = _base_frame(poly)
 
-        return self(coords, frames, sequence)
+        return self(coords, frames)
 
     @classmethod
     def load(

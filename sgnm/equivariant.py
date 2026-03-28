@@ -156,3 +156,17 @@ class EquivariantReactivityModel(nn.Module):
         residue_features = polymer.reduce(atom_features, Scale.RESIDUE, Reduction.MEAN)
 
         return self.out_proj(residue_features)
+
+    def ciffy(
+        self,
+        poly: "Polymer",
+    ) -> torch.Tensor:
+        """Predict reactivity from a ciffy Polymer object.
+
+        Args:
+            poly: RNA polymer structure.
+
+        Returns:
+            (n_residues, out_channels) predicted reactivities.
+        """
+        return self(poly)

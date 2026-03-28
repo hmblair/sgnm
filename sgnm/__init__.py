@@ -50,7 +50,7 @@ from .scoring import (
 from .training import Trainer, train_sgnm, TrainResults
 
 # Data
-from .data import HDF5Dataset, Sample, ProfileLoader, tokenize
+from .data import ReactivityDataset, Sample, ProfileLoader, load_reactivity_index
 
 # =============================================================================
 # Convenience Functions
@@ -114,10 +114,10 @@ __all__ = [
     "train_sgnm",
     "TrainResults",
     # Data
-    "HDF5Dataset",
+    "ReactivityDataset",
     "Sample",
     "ProfileLoader",
-    "tokenize",
+    "load_reactivity_index",
     # VAE
     "vae",
     "VAEConfig",

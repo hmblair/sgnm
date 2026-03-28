@@ -74,17 +74,14 @@ class DataConfig:
     reactivity_path: str = ""
     """Path to HDF5 file containing reactivity profiles."""
 
+    fasta_path: str = ""
+    """Path to FASTA file containing probed sequences."""
+
     structures_dir: str = ""
     """Directory containing structural files (CIF/PDB)."""
 
     data_format: Literal["v1", "v2"] = "v2"
     """Format of the reactivity data file (v1: old format, v2: PDB130 format)."""
-
-    offset: int = 51
-    """Offset for aligning reactivity to structure (dataset-specific)."""
-
-    trim_ends: int = 5
-    """Number of residues to trim from each end (unreliable data)."""
 
     max_chains: int = 2
     """Maximum number of chains per structure (filter out larger complexes)."""

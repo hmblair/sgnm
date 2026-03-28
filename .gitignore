@@ -1,3 +1,4 @@
+.rex.toml
 __pycache__/
 build/
 dist/
