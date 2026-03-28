@@ -7,6 +7,9 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 
+from dlu.logging import WandbLogger, is_wandb_available, ConsoleProgress
+from dlu.training import LossTracker
+
 from .config import TrainConfig, DataConfig
 from .data import ReactivityDataset, Sample
 from .losses import mae_loss, mse_loss, correlation_loss
@@ -32,6 +35,9 @@ class TrainResults:
     history: list[dict] = field(default_factory=list)
 
 
+LOSS_FNS = {"mae": mae_loss, "mse": mse_loss, "correlation": correlation_loss}
+
+
 class Trainer:
     """Per-model training state: optimizer, scheduler, logging, checkpointing."""
 
@@ -50,12 +56,6 @@ class Trainer:
         self.global_step = 0
         self.best_val_loss = float("inf")
         self.patience_counter = 0
-
-        # Epoch accumulators
-        self._epoch_loss = 0.0
-        self._epoch_samples = 0
-        self._val_loss = 0.0
-        self._val_samples = 0
 
         # Optimizer
         if config.weight_decay > 0:
@@ -82,30 +82,20 @@ class Trainer:
                 min_lr_ratio=config.min_lr_ratio,
             )
 
-        # Loss function
-        self._loss_fn = {
-            "mae": mae_loss,
-            "mse": mse_loss,
-            "correlation": correlation_loss,
-        }[config.loss_type]
+        self._loss_fn = LOSS_FNS[config.loss_type]
+        self._train_tracker = LossTracker(name)
+        self._val_tracker = LossTracker(f"{name}/val")
 
-        # Wandb
-        self.wandb_run = None
-        if config.wandb_project:
-            try:
-                import wandb
-                self.wandb_run = wandb.init(
-                    project=config.wandb_project,
-                    name=config.wandb_run,
-                    reinit=True,
-                )
-            except ImportError:
-                print(f"[{name}] Warning: wandb not installed")
+        # Logging
+        self._wandb: WandbLogger | None = None
+        if config.wandb_project and is_wandb_available():
+            run_name = config.wandb_run or name
+            self._wandb = WandbLogger(config.wandb_project, name=run_name, reinit=True)
 
     def begin_epoch(self, epoch: int) -> None:
         self.epoch = epoch
-        self._epoch_loss = 0.0
-        self._epoch_samples = 0
+        self._train_tracker.start_epoch()
+        self._epoch_skips = {"model_error": 0, "size_mismatch": 0}
         self.model.train()
         self.optimizer.zero_grad()
 
@@ -116,6 +106,7 @@ class Trainer:
         try:
             pred = self.model.ciffy(sample.polymer)
         except (ValueError, RuntimeError):
+            self._epoch_skips["model_error"] += 1
             return
 
         pred = _normalize(pred)
@@ -127,12 +118,12 @@ class Trainer:
 
         mask = sample.mask
         if mask.size(0) != pred.size(0):
+            self._epoch_skips["size_mismatch"] += 1
             return
 
         loss = self._loss_fn(pred[mask], target[mask])
         loss.backward()
 
-        # Step optimizer (simplified: step every sample)
         if self.config.gradient_clip:
             torch.nn.utils.clip_grad_norm_(
                 self.model.parameters(),
@@ -143,28 +134,32 @@ class Trainer:
             self.scheduler.step()
         self.optimizer.zero_grad()
 
-        self._epoch_loss += loss.item()
-        self._epoch_samples += 1
+        self._train_tracker.update(loss.item())
         self.global_step += 1
 
-        if self.wandb_run and self.global_step % self.config.log_every == 0:
-            self.wandb_run.log({
-                "train/loss": loss.item(),
-                "train/step": self.global_step,
-            })
+        if self._wandb and self.global_step % self.config.log_every == 0:
+            self._wandb.log_step(self._train_tracker.metrics)
 
-        if (self.wandb_run
+        if (self._wandb
                 and self.config.visualize_every > 0
                 and self.global_step % self.config.visualize_every == 0):
             self._visualize(sample, pred, target)
 
     def end_epoch(self) -> dict:
-        train_loss = self._epoch_loss / max(self._epoch_samples, 1)
-        return {"loss": train_loss, "samples": self._epoch_samples}
+        trained = self._train_tracker.current_step + 1
+        skipped = sum(self._epoch_skips.values())
+        return {
+            "loss": self._train_tracker.average_loss,
+            "trained": trained,
+            "skipped": skipped,
+            "skip_details": {k: v for k, v in self._epoch_skips.items() if v > 0},
+        }
 
     def begin_validation(self) -> None:
-        self._val_loss = 0.0
-        self._val_samples = 0
+        self._val_mae_tracker = LossTracker(f"{self.name}/val_mae")
+        self._val_corr_tracker = LossTracker(f"{self.name}/val_corr")
+        self._val_mae_tracker.start_epoch()
+        self._val_corr_tracker.start_epoch()
         self.model.eval()
 
     @torch.no_grad()
@@ -187,14 +182,19 @@ class Trainer:
         if mask.size(0) != pred.size(0):
             return
 
-        loss = torch.abs(pred[mask] - target[mask]).mean()
-        self._val_loss += loss.item()
-        self._val_samples += 1
+        self._val_mae_tracker.update(
+            mae_loss(pred[mask], target[mask]).item()
+        )
+        self._val_corr_tracker.update(
+            correlation_loss(pred[mask], target[mask]).item()
+        )
 
     def end_validation(self) -> dict:
-        val_loss = self._val_loss / max(self._val_samples, 1)
+        val_mae = self._val_mae_tracker.average_loss
+        val_corr = self._val_corr_tracker.average_loss
 
-        # Early stopping
+        # Early stopping uses the training loss type
+        val_loss = val_corr if self.config.loss_type == "correlation" else val_mae
         if val_loss < self.best_val_loss:
             self.best_val_loss = val_loss
             self.patience_counter = 0
@@ -203,7 +203,7 @@ class Trainer:
         else:
             self.patience_counter += 1
 
-        return {"loss": val_loss, "samples": self._val_samples}
+        return {"mae": val_mae, "corr": val_corr}
 
     def should_stop(self) -> bool:
         return self.patience_counter >= self.config.patience
@@ -211,15 +211,21 @@ class Trainer:
     def log_epoch(self, epoch: int, train_metrics: dict, val_metrics: dict | None) -> None:
         parts = [f"[{self.name}] Epoch {epoch}"]
         parts.append(f"train_loss={train_metrics['loss']:.4f}")
+        parts.append(f"trained={train_metrics['trained']}")
+        if train_metrics.get("skip_details"):
+            skip_str = ", ".join(f"{k}={v}" for k, v in train_metrics["skip_details"].items())
+            parts.append(f"skipped={train_metrics['skipped']} ({skip_str})")
         if val_metrics:
-            parts.append(f"val_loss={val_metrics['loss']:.4f}")
+            parts.append(f"val_mae={val_metrics['mae']:.4f}")
+            parts.append(f"val_corr={val_metrics['corr']:.4f}")
         print(" | ".join(parts))
 
-        if self.wandb_run:
-            log_dict = {"epoch": epoch, "train/epoch_loss": train_metrics["loss"]}
+        if self._wandb:
+            log = {"epoch": epoch, **self._train_tracker.epoch_metrics}
             if val_metrics:
-                log_dict["val/loss"] = val_metrics["loss"]
-            self.wandb_run.log(log_dict)
+                log["val/mae"] = val_metrics["mae"]
+                log["val/corr"] = val_metrics["corr"]
+            self._wandb.log_epoch(epoch, log)
 
     def _visualize(self, sample: Sample, pred: torch.Tensor, target: torch.Tensor) -> None:
         import matplotlib.pyplot as plt
@@ -230,7 +236,8 @@ class Trainer:
         ax.set_title(f"[{self.name}] {sample.name}")
         ax.set_xlabel("Residue")
         ax.set_ylabel("Normalized Reactivity")
-        self.wandb_run.log({"visualization": self.wandb_run.Image(fig)})
+        import wandb
+        self._wandb.log_step({"visualization": wandb.Image(fig)})
         plt.close(fig)
 
     def _save_checkpoint(self, filename: str) -> None:
@@ -245,8 +252,8 @@ class Trainer:
         }, checkpoint_dir / filename)
 
     def finish(self) -> None:
-        if self.wandb_run:
-            self.wandb_run.finish()
+        if self._wandb:
+            self._wandb.close()
 
     def results(self) -> TrainResults:
         return TrainResults(
@@ -328,6 +335,9 @@ def train(
         print(f"[{name}] Parameters: {sum(p.numel() for p in model.parameters())}")
         trainers[name] = Trainer(name, model, tc, len(train_dataset))
 
+    # Console progress on training data
+    progress = ConsoleProgress(train_dataset, name="train")
+
     # Shared training loop
     results: dict[str, TrainResults] = {}
     for epoch in range(train_config.max_epochs):
@@ -335,11 +345,17 @@ def train(
         for t in trainers.values():
             t.begin_epoch(epoch)
 
-        for sample in train_dataset:
+        progress.start_epoch(epoch)
+        for sample in progress:
             for t in trainers.values():
                 t.train_step(sample)
+            progress.update({"loss": list(trainers.values())[0]._train_tracker.current_loss})
 
         train_metrics = {n: t.end_epoch() for n, t in trainers.items()}
+
+        # Print dataset summary after first epoch
+        if epoch == 0:
+            print(f"\nTraining data:\n{train_dataset.summary()}")
 
         # Validate
         val_metrics = {}
@@ -361,7 +377,6 @@ def train(
                 print(f"[{name}] Early stopping at epoch {epoch}")
                 stopped.append(name)
 
-        # Remove stopped trainers
         for name in stopped:
             trainers[name].finish()
             results[name] = trainers[name].results()
@@ -371,6 +386,7 @@ def train(
             break
 
     # Finalize remaining
+    progress.close()
     for name, t in trainers.items():
         t.finish()
         results[name] = t.results()

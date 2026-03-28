@@ -117,6 +117,7 @@ class ReactivityDataset:
     ) -> None:
         self.structures = structures
         self.index = index
+        self.skip_counts: dict[str, int] = {}
 
     def __len__(self) -> int:
         return len(self.structures)
@@ -124,15 +125,18 @@ class ReactivityDataset:
     def __getitem__(self, idx: int) -> Sample | None:
         polymer = self.structures[idx]
         if polymer is None:
+            self._skip("load_failed")
             return None
 
         try:
             stripped = polymer.strip()
             if stripped.empty():
+                self._skip("empty")
                 return None
 
             match = self.index.match(stripped)
             if match is None:
+                self._skip("no_reactivity_match")
                 return None
 
             reactivity = match.reactivity
@@ -150,14 +154,30 @@ class ReactivityDataset:
                 mask=mask,
             )
 
-        except Exception:
+        except Exception as e:
+            self._skip(f"error:{type(e).__name__}")
             return None
 
+    def _skip(self, reason: str) -> None:
+        self.skip_counts[reason] = self.skip_counts.get(reason, 0) + 1
+
     def __iter__(self) -> Iterator[Sample]:
+        self.skip_counts.clear()
+        yielded = 0
         for i in range(len(self)):
             sample = self[i]
             if sample is not None:
+                yielded += 1
                 yield sample
+        self._yielded = yielded
+
+    def summary(self) -> str:
+        total = len(self)
+        yielded = getattr(self, "_yielded", "?")
+        parts = [f"{yielded}/{total} samples yielded"]
+        for reason, count in sorted(self.skip_counts.items(), key=lambda x: -x[1]):
+            parts.append(f"  {reason}: {count}")
+        return "\n".join(parts)
 
 
 class ProfileLoader:
