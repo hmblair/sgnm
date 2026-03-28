@@ -3,7 +3,7 @@ import torch
 import ciffy
 import matplotlib.pyplot as plt
 import h5py
-from .layers import SGNM
+from .models import SGNM
 
 parser = argparse.ArgumentParser()
 parser.add_argument(

@@ -21,11 +21,6 @@ from .config import (
     FilterConfig,
     RelaxConfig,
     BatchScoringConfig,
-    FRAME1,
-    FRAME2,
-    FRAME3,
-    FRAMES,
-    NUCLEOTIDE_DICT,
 )
 
 # Neural Network Layers
@@ -47,7 +42,7 @@ from .scoring import (
 )
 
 # Training
-from .training import Trainer, train_sgnm, TrainResults
+from .training import train, TrainResults
 
 # Data
 from .data import ReactivityDataset, Sample, ProfileLoader, load_reactivity_index
@@ -75,7 +70,7 @@ def load(path: str | None = None) -> BaseSGNM:
     return SGNM.load(path)
 
 
-__version__ = "1.1.0"
+__version__ = "2.0.0"
 
 __all__ = [
     # Backward compatible
@@ -92,12 +87,6 @@ __all__ = [
     "FilterConfig",
     "RelaxConfig",
     "BatchScoringConfig",
-    # Constants
-    "FRAME1",
-    "FRAME2",
-    "FRAME3",
-    "FRAMES",
-    "NUCLEOTIDE_DICT",
     # NN
     "RadialBasisFunctions",
     "DenseNetwork",
@@ -110,8 +99,7 @@ __all__ = [
     "RelaxResult",
     "BatchScoringResults",
     # Training
-    "Trainer",
-    "train_sgnm",
+    "train",
     "TrainResults",
     # Data
     "ReactivityDataset",

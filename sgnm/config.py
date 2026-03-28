@@ -1,47 +1,9 @@
 """
-Configuration dataclasses and constants for SGNM.
+Configuration dataclasses for SGNM.
 """
 from __future__ import annotations
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
-import torch
-from ciffy.biochemistry import Residue
-
-
-# =============================================================================
-# Constants: Nucleobase frame atoms (C2-C4-C6)
-# =============================================================================
-
-FRAME1 = torch.tensor([
-    Residue.A.C2.value,
-    Residue.C.C2.value,
-    Residue.G.C2.value,
-    Residue.U.C2.value,
-])
-
-FRAME2 = torch.tensor([
-    Residue.A.C4.value,
-    Residue.C.C4.value,
-    Residue.G.C4.value,
-    Residue.U.C4.value,
-])
-
-FRAME3 = torch.tensor([
-    Residue.A.C6.value,
-    Residue.C.C6.value,
-    Residue.G.C6.value,
-    Residue.U.C6.value,
-])
-
-FRAMES = torch.cat([FRAME1, FRAME2, FRAME3])
-
-# Nucleotide vocabulary for sequence tokenization
-NUCLEOTIDE_DICT = {'A': 0, 'C': 1, 'G': 2, 'U': 3, 'T': 3}
-
-
-# =============================================================================
-# Model Configuration
-# =============================================================================
 
 @dataclass
 class ModelConfig:
@@ -125,17 +87,8 @@ class TrainConfig:
     min_lr_ratio: float = 0.1
     """Minimum LR as fraction of initial LR (for cosine schedule)."""
 
-    accumulation_steps: int = 1
-    """Gradient accumulation steps."""
-
-    eval_only: bool = False
-    """If True, run validation only without optimization."""
-
     checkpoint_dir: str = "./checkpoints"
     """Directory for saving model checkpoints."""
-
-    save_every: int = 10
-    """Save checkpoint every N epochs."""
 
     save_best: bool = True
     """Save checkpoint when validation loss improves."""
