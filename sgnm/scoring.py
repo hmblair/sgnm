@@ -591,3 +591,105 @@ class Score(nn.Module):
             opt.step()
 
         return relaxed
+
+
+# =============================================================================
+# Ranking
+# =============================================================================
+
+def _normalize(x: torch.Tensor) -> torch.Tensor:
+    min_val = x.min()
+    max_val = (x - min_val).max()
+    if max_val > 0:
+        return (x - min_val) / max_val
+    return x - min_val
+
+
+def _correlation(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    p = pred - pred.mean(dim=0, keepdim=True)
+    t = target - target.mean(dim=0, keepdim=True)
+    num = (p * t).sum(dim=0)
+    den = torch.sqrt((p ** 2).sum(dim=0) * (t ** 2).sum(dim=0))
+    return num / (den + 1e-8)
+
+
+@dataclass
+class RankingEntry:
+    """A single ranked structure."""
+
+    file: str
+    score: float
+    rank: int
+
+
+@dataclass
+class RankingResult:
+    """Result of ranking a set of decoy structures."""
+
+    entries: list[RankingEntry]
+    reactivity_length: int
+
+    @property
+    def best(self) -> RankingEntry:
+        return self.entries[0]
+
+    @property
+    def worst(self) -> RankingEntry:
+        return self.entries[-1]
+
+    def to_csv(self, path: str) -> None:
+        import csv
+        with open(path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=["rank", "file", "score"])
+            writer.writeheader()
+            for e in self.entries:
+                writer.writerow({"rank": e.rank, "file": e.file, "score": e.score})
+
+
+def rank(
+    model: nn.Module,
+    structures: str | Path | list[str | Path],
+    reactivity: torch.Tensor,
+) -> RankingResult:
+    """Rank decoy structures by agreement between predicted and experimental reactivity.
+
+    Args:
+        model: Trained model with a .ciffy() method.
+        structures: Directory of .cif files, or a list of .cif paths.
+        reactivity: Target reactivity aligned to structure length,
+            shape (L,) or (L, C) for multi-channel.
+
+    Returns:
+        RankingResult sorted by score (best first).
+    """
+    if isinstance(structures, (str, Path)):
+        cif_files = sorted(Path(structures).glob("*.cif"))
+    else:
+        cif_files = [Path(p) for p in structures]
+
+    entries = []
+    model.eval()
+    with torch.no_grad():
+        for path in tqdm(cif_files, desc="Ranking"):
+            try:
+                poly = ciffy.load(str(path), backend="torch")
+                pred = _normalize(model.ciffy(poly))
+
+                if reactivity.dim() > 1:
+                    corr = _correlation(
+                        pred.unsqueeze(-1).expand_as(reactivity),
+                        reactivity,
+                    )
+                    score = (corr ** 2 * corr.sign()).sum().item()
+                else:
+                    score = _correlation(pred, _normalize(reactivity)).item()
+
+                entries.append(RankingEntry(file=path.name, score=score, rank=0))
+            except Exception:
+                continue
+
+    entries.sort(key=lambda e: e.score, reverse=True)
+    for i, e in enumerate(entries):
+        e.rank = i + 1
+
+    return RankingResult(entries=entries, reactivity_length=reactivity.shape[0])

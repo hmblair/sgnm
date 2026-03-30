@@ -5,15 +5,19 @@ structures_dir = "/scratch/users/hmblair/data/rna"
 data_format = "v2"
 
 [train]
-learning_rate = 1e-2
+learning_rate = 1e-3
 max_epochs = 100
 warmup_epochs = 5.0
 device = "cuda"
 checkpoint_dir = "./checkpoints"
 loss_type = "correlation"
 wandb_project = "sgnm"
-wandb_run = "dim32-layers2-corr"
+wandb_run = "dim32-corr"
 
 [gnm]
 dim = 32
 layers = 2
+
+[equivariant]
+embed_dim = 32
+hidden_layers = 4
