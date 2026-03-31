@@ -17,12 +17,15 @@ from .schedulers import get_cosine_schedule_with_warmup
 
 
 def _normalize(x: torch.Tensor) -> torch.Tensor:
-    """Normalize tensor to [0, 1] range."""
-    min_val = x.min()
-    max_val = (x - min_val).max()
-    if max_val > 0:
-        return (x - min_val) / max_val
-    return x - min_val
+    """Normalize tensor to [0, 1] range, per-column for 2D input."""
+    if x.dim() == 1:
+        min_val = x.min()
+        max_val = (x - min_val).max()
+        return (x - min_val) / max_val.clamp(min=1e-8)
+    # Per-column normalization for (N, C)
+    min_val = x.min(dim=0).values
+    max_val = (x - min_val).max(dim=0).values.clamp(min=1e-8)
+    return (x - min_val) / max_val
 
 
 @dataclass
@@ -109,19 +112,20 @@ class Trainer:
             self._epoch_skips["model_error"] += 1
             return
 
-        pred = _normalize(pred)
-
-        if sample.reactivity.dim() > 1:
-            target = _normalize(sample.reactivity[..., 0])
-        else:
-            target = _normalize(sample.reactivity)
-
+        target = sample.reactivity
         mask = sample.mask
+
         if mask.size(0) != pred.size(0):
             self._epoch_skips["size_mismatch"] += 1
             return
 
-        loss = self._loss_fn(pred[mask], target[mask])
+        # Normalize per-channel
+        pred = pred[mask]
+        target = target[mask]
+        pred = _normalize(pred)
+        target = _normalize(target)
+
+        loss = self._loss_fn(pred, target)
         loss.backward()
 
         if self.config.gradient_clip:
@@ -171,19 +175,17 @@ class Trainer:
         except (ValueError, RuntimeError):
             return
 
-        pred = _normalize(pred)
-
-        if sample.reactivity.dim() > 1:
-            target = _normalize(sample.reactivity[..., 0])
-        else:
-            target = _normalize(sample.reactivity)
-
+        target = sample.reactivity
         mask = sample.mask
+
         if mask.size(0) != pred.size(0):
             return
 
+        pred = _normalize(pred[mask])
+        target = _normalize(target[mask])
+
         self._val_mae_tracker.update(
-            mae_loss(pred[mask], target[mask]).item()
+            mae_loss(pred, target).item()
         )
         self._val_corr_tracker.update(
             correlation_loss(pred[mask], target[mask]).item()

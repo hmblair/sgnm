@@ -124,54 +124,23 @@ class SGNM(BaseSGNM):
 
     def __init__(
         self: SGNM,
-        config_or_dim: ModelConfig | int,
-        out_dim: int = 1,
-        layers: int = 1,
+        config: ModelConfig,
     ) -> None:
-        """
-        Initialize SGNM model.
-
-        Args:
-            config_or_dim: ModelConfig dataclass or dimension (int for backward compatibility)
-            out_dim: Output dimension (only used if config_or_dim is int)
-            layers: Number of hidden layers (only used if config_or_dim is int)
-        """
         super().__init__()
-
-        # Handle backward compatibility
-        if isinstance(config_or_dim, int):
-            config = ModelConfig(dim=config_or_dim, out_dim=out_dim, layers=layers)
-        else:
-            config = config_or_dim
-
         self.config = config
         dim = config.dim
+        k = config.gnm_channels
 
-        # Distance pathway
+        # Distance pathway: (N, N) -> (N, N, k)
         self.rbf1 = RadialBasisFunctions(dim)
-        self.linear1 = DenseNetwork(dim, config.out_dim, [dim] * config.layers)
+        self.linear1 = DenseNetwork(dim, k, [dim] * config.layers)
 
-        # Orientation pathway
+        # Orientation pathway: (N, N) -> (N, N, k)
         self.rbf2 = RadialBasisFunctions(dim)
-        self.linear2 = DenseNetwork(dim, config.out_dim, [dim] * config.layers)
+        self.linear2 = DenseNetwork(dim, k, [dim] * config.layers)
 
-    def embed1(
-        self: SGNM,
-        dists: torch.Tensor,
-    ) -> torch.Tensor:
-        """Compute distance-based embedding."""
-        adj = self.rbf1(dists)
-        adj = self.linear1(adj).squeeze(-1)
-        return _normalize(adj)
-
-    def embed2(
-        self: SGNM,
-        scores: torch.Tensor,
-    ) -> torch.Tensor:
-        """Compute orientation-based embedding."""
-        adj = self.rbf2(scores)
-        adj = self.linear2(adj).squeeze(-1)
-        return _normalize(adj)
+        # Project GNM variances to output channels: (N, k) -> (N, out_channels)
+        self.out_proj = nn.Linear(k, config.out_channels)
 
     def forward(
         self: SGNM,
@@ -186,17 +155,23 @@ class SGNM(BaseSGNM):
             frames: Local coordinate frames, shape (N, 3, 3)
 
         Returns:
-            Normalized variance predictions, shape (N,)
+            Predicted reactivity, shape (N, out_channels)
         """
         dists = torch.cdist(coords, coords)
-        emb = self.embed1(dists)
+
+        # (N, N) -> (N, N, k)
+        emb = self.linear1(self.rbf1(dists))
 
         if frames is not None:
             scores = _orientation_score(frames)
-            emb = emb * self.embed2(scores)
+            emb = emb * self.linear2(self.rbf2(scores))
 
-        emb = _gnm_variances(emb)
-        return _normalize(emb)
+        # (N, N, k) -> (k, N, N) for batched GNM
+        emb = emb.permute(2, 0, 1)
+        variances = _gnm_variances(emb)  # (k, N)
+        variances = variances.permute(1, 0)  # (N, k)
+
+        return self.out_proj(variances)  # (N, out_channels)
 
     def ciffy(
         self: SGNM,
@@ -220,26 +195,33 @@ class SGNM(BaseSGNM):
     @classmethod
     def load(
         cls: type[SGNM],
-        path: str | None = None,
-    ) -> BaseSGNM:
+        path: str,
+    ) -> SGNM:
         """
-        Load model from weights file.
-
-        If path is None, returns a non-parametric BaseSGNM model.
+        Load model from checkpoint.
 
         Args:
-            path: Path to weights file, or None for base model
+            path: Path to checkpoint file (as saved by Trainer).
 
         Returns:
-            Loaded model (SGNM if path provided, BaseSGNM otherwise)
+            Loaded SGNM model.
         """
-        if path is None:
-            return BaseSGNM()
+        checkpoint = torch.load(path, weights_only=True)
+        state_dict = checkpoint.get("model_state_dict", checkpoint)
 
-        weights = torch.load(path, weights_only=True)
-        dim = weights['rbf1.mu'].size(0)
+        # Infer config from weights
+        dim = state_dict["rbf1.mu"].size(0)
+        gnm_channels = state_dict["linear1.layers.0.weight"].size(0)
+        out_channels = state_dict["out_proj.weight"].size(0)
+        # Count hidden layers by looking for linear1.layers.{i}.weight
+        n_layers = sum(1 for k in state_dict if k.startswith("linear1.layers.") and k.endswith(".weight")) - 1
 
-        module = SGNM(dim)
-        module.load_state_dict(weights)
-
-        return module
+        config = ModelConfig(
+            dim=dim,
+            out_channels=out_channels,
+            gnm_channels=gnm_channels,
+            layers=n_layers,
+        )
+        model = cls(config)
+        model.load_state_dict(state_dict)
+        return model

@@ -12,8 +12,12 @@ class ModelConfig:
     dim: int = 32
     """Dimension of radial basis functions and hidden layers."""
 
-    out_dim: int = 1
-    """Output dimension (1 for SHAPE, 2 for SHAPE+DMS)."""
+    out_channels: int = 2
+    """Number of output channels (e.g. 2 for SHAPE+DMS)."""
+
+    gnm_channels: int = 4
+    """Number of independent GNM adjacency matrices. Each produces a separate
+    variance, then a linear layer projects to out_channels."""
 
     layers: int = 1
     """Number of hidden layers in the dense networks."""
