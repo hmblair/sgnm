@@ -162,9 +162,12 @@ class ReactivityDataset:
         self.skip_counts[reason] = self.skip_counts.get(reason, 0) + 1
 
     def __iter__(self) -> Iterator[Sample]:
+        import random
         self.skip_counts.clear()
         yielded = 0
-        for i in range(len(self)):
+        indices = list(range(len(self)))
+        random.shuffle(indices)
+        for i in indices:
             sample = self[i]
             if sample is not None:
                 yielded += 1
