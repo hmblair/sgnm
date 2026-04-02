@@ -43,7 +43,9 @@ def _normalize(x: torch.Tensor) -> torch.Tensor:
     """Normalize tensor to [0, 1] range."""
     min_val = x.min()
     max_val = (x - min_val).max()
-    return (x - min_val) / max_val
+    if max_val > 0:
+        return (x - min_val) / max_val
+    return x - min_val
 
 
 def _base_frame(poly: ciffy.Polymer) -> torch.Tensor:
@@ -57,60 +59,7 @@ def _base_frame(poly: ciffy.Polymer) -> torch.Tensor:
     return R
 
 
-class BaseSGNM(nn.Module):
-    """
-    Base SGNM model using inverse-square distance weighting.
-
-    This non-parametric model computes GNM variances directly from
-    coordinates without any learnable parameters.
-    """
-
-    def __init__(self: BaseSGNM) -> None:
-        super().__init__()
-
-    def forward(
-        self: BaseSGNM,
-        coords: torch.Tensor,
-        frames: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        """
-        Compute normalized GNM variances from coordinates.
-
-        Args:
-            coords: Residue center coordinates, shape (N, 3)
-            frames: Ignored in base model
-
-        Returns:
-            Normalized variance predictions, shape (N,)
-        """
-        dists = torch.cdist(coords, coords)
-        dists = 1 / dists ** 2
-
-        ix = range(dists.size(0))
-        dists[ix, ix] = 0.0
-
-        emb = _gnm_variances(dists)
-        return _normalize(emb)
-
-    def ciffy(
-        self: BaseSGNM,
-        poly: ciffy.Polymer,
-    ) -> torch.Tensor:
-        """
-        Compute predictions from a ciffy Polymer object.
-
-        Args:
-            poly: RNA polymer structure
-
-        Returns:
-            Normalized variance predictions
-        """
-        poly = poly.torch()
-        _, coords = poly.center(ciffy.RESIDUE)
-        return self(coords)
-
-
-class SGNM(BaseSGNM):
+class SGNM(nn.Module):
     """
     Structure-Guided Normal Mode model with learnable embeddings.
 

@@ -1,84 +1,47 @@
+"""Predict per-residue reactivity from an RNA structure.
+
+Usage:
+    python -m sgnm structure.cif --weights checkpoints/gnm/best.pth
+    python -m sgnm structure.cif --weights checkpoints/gnm/best.pth --out predictions.h5
+"""
 import argparse
+
 import torch
 import ciffy
-import matplotlib.pyplot as plt
-import h5py
+
 from .models import SGNM
 
-parser = argparse.ArgumentParser()
-parser.add_argument(
-    'file',
-    help='The input .cif file.',
-)
-parser.add_argument(
-    '--weights',
-    help='The location of the trained weights.',
-)
-parser.add_argument(
-    '--chain',
-    help='Use this chain for prediction only.',
-    type=int,
-)
-parser.add_argument(
-    '--out',
-    help='Save the reactivity profile to this location.',
-)
 
-if __name__ == "__main__":
-
+def main():
+    parser = argparse.ArgumentParser(description="Predict reactivity from RNA 3D structure")
+    parser.add_argument("file", help="Input .cif file")
+    parser.add_argument("--weights", required=True, help="Path to model checkpoint")
+    parser.add_argument("--out", help="Save predictions to HDF5 file")
     args = parser.parse_args()
 
-    # Init the module
-
-    if args.weights:
-        module = SGNM.load(args.weights)
-    else:
-        module = SGNM.load()
-    module.eval()
-
-    # Load and preprocess
+    model = SGNM.load(args.weights)
+    model.eval()
 
     poly = ciffy.load(args.file, backend="torch")
-    if args.chain is not None:
-        poly = poly.by_index(args.chain)
-
-    poly = poly.by_type(ciffy.RNA)
-    n = poly.size(ciffy.RESIDUE)
-
-    if n == 0:
-        raise ValueError(f"No residues found in PDB {poly.id()}.")
-
-    x = torch.arange(n)
-    y = torch.ones(n) * torch.nan
-
-    ix = poly.resolved()
-    stripped = poly.strip()
-
-    # Predict
 
     with torch.no_grad():
-        y[ix] = module.ciffy(stripped)
-
-    # Save
+        pred = model.ciffy(poly)  # (N, out_channels)
 
     if args.out:
+        import h5py
         with h5py.File(args.out, "w") as f:
-            f.create_dataset(f"{poly.id()}", data=y.numpy())
+            f.create_dataset("reactivity", data=pred.numpy())
 
-    # Plot
+    # Print summary
+    n = pred.size(0)
+    channels = pred.size(1) if pred.dim() > 1 else 1
+    print(f"Structure: {args.file}")
+    print(f"Residues: {n}")
+    print(f"Channels: {channels}")
+    for c in range(channels):
+        col = pred[:, c] if pred.dim() > 1 else pred
+        print(f"  Channel {c}: mean={col.mean():.4f}, std={col.std():.4f}")
 
-    low = 0
-    high = 0
 
-    for chain in poly.chains():
-
-        high += chain.size(ciffy.RESIDUE)
-        plt.plot(x[low:high], y[low:high], label=f"Chain {chain.names[0]}")
-        low += chain.size(ciffy.RESIDUE)
-
-    plt.title(f"PDB {poly.id()}", fontsize=14)
-    plt.xlabel("Nucleotide", fontsize=13)
-    plt.ylabel("Normalized Reactivity", fontsize=13)
-    plt.legend(fontsize=13)
-    plt.show()
-    plt.close()
+if __name__ == "__main__":
+    main()

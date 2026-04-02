@@ -1,4 +1,0 @@
-matplotlib
-h5py
-torch
-ciffy

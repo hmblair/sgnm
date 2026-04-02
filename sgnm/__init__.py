@@ -5,8 +5,7 @@ SGNM: Structure-Guided Normal Mode Model for RNA reactivity prediction.
 # =============================================================================
 # Backward Compatible Exports (original API)
 # =============================================================================
-from .models import SGNM, BaseSGNM
-from .scoring import Score as score
+from .models import SGNM
 
 # =============================================================================
 # New API
@@ -32,7 +31,6 @@ from .schedulers import get_cosine_schedule_with_warmup
 
 # Scoring
 from .scoring import (
-    Score,
     StructureScorer,
     BatchScorer,
     StructureRelaxer,
@@ -57,15 +55,15 @@ def equivariant(**kwargs) -> "EquivariantReactivityModel":
     return EquivariantReactivityModel(**kwargs)
 
 
-def load(path: str | None = None) -> BaseSGNM:
+def load(path: str) -> SGNM:
     """
-    Load a model from weights file.
+    Load an SGNM model from a checkpoint.
 
     Args:
-        path: Path to weights file, or None for base model
+        path: Path to checkpoint file.
 
     Returns:
-        Loaded model
+        Loaded SGNM model.
     """
     return SGNM.load(path)
 
@@ -73,10 +71,8 @@ def load(path: str | None = None) -> BaseSGNM:
 __version__ = "2.0.0"
 
 __all__ = [
-    # Backward compatible
+    # Models
     "SGNM",
-    "BaseSGNM",
-    "score",
     # Models
     "load",
     # Config
@@ -91,7 +87,6 @@ __all__ = [
     "RadialBasisFunctions",
     "DenseNetwork",
     # Scoring
-    "Score",
     "StructureScorer",
     "BatchScorer",
     "StructureRelaxer",
@@ -106,14 +101,4 @@ __all__ = [
     "Sample",
     "ProfileLoader",
     "load_reactivity_index",
-    # VAE
-    "vae",
-    "VAEConfig",
-    "VAETrainConfig",
-    "StructureVAE",
-    "VAELoss",
-    "VAETrainer",
-    "train_vae",
-    "StructureOnlyDataset",
-    "StructureDataConfig",
 ]

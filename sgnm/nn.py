@@ -50,7 +50,7 @@ class DenseNetwork(nn.Module):
         self: DenseNetwork,
         in_size: int,
         out_size: int,
-        hidden_sizes: list = [],
+        hidden_sizes: list | None = None,
         bias: bool = True,
         dropout: float = 0.0,
         activation: nn.Module = nn.LeakyReLU(0.2),
@@ -58,7 +58,7 @@ class DenseNetwork(nn.Module):
 
         super().__init__()
 
-        features = [in_size] + hidden_sizes + [out_size]
+        features = [in_size] + (hidden_sizes or []) + [out_size]
 
         layers = []
         for l1, l2 in itertools.pairwise(features):

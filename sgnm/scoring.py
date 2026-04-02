@@ -11,13 +11,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from copy import deepcopy
-from typing import Iterator
 import torch
 import torch.nn as nn
 import ciffy
-from tqdm import trange, tqdm
+from tqdm import tqdm
 
-from .models import SGNM, BaseSGNM
 from .config import ScoringConfig, FilterConfig, RelaxConfig, BatchScoringConfig
 
 
@@ -138,12 +136,12 @@ class StructureScorer:
     Core scoring logic for comparing predictions against target profiles.
 
     This class is model-agnostic and can work with any model that implements
-    the BaseSGNM interface.
+    a .ciffy() method.
     """
 
     def __init__(
         self,
-        model: BaseSGNM,
+        model: nn.Module,
         config: ScoringConfig | None = None,
     ) -> None:
         """
@@ -477,121 +475,6 @@ class BatchScorer:
 # =============================================================================
 # Score (Backward Compatible)
 # =============================================================================
-
-class Score(nn.Module):
-    """
-    Score structures against experimental profiles.
-
-    This class provides backward compatibility with the original API.
-    For new code, consider using StructureScorer directly.
-    """
-
-    def __init__(
-        self: Score,
-        weights: str | None = None,
-    ) -> None:
-        """
-        Initialize Score with model weights.
-
-        Args:
-            weights: Path to weights file, or None for base model
-        """
-        super().__init__()
-
-        self.module = SGNM.load(weights)
-        self.module.eval()
-        for param in self.module.parameters():
-            param.requires_grad = False
-
-    def forward(
-        self: Score,
-        profile: torch.Tensor,
-        coords: torch.Tensor,
-        frames: torch.Tensor | None = None,
-        blank: tuple[int, int] | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Return the MAE between the provided and predicted SHAPE profiles.
-
-        Args:
-            profile: Target SHAPE profile
-            coords: Residue coordinates
-            frames: Local coordinate frames
-            blank: Tuple of (start, end) residues to mask
-
-        Returns:
-            Tuple of (MAE score, predicted profile)
-        """
-        pred = self.module(coords, frames)
-        ix = ~torch.isnan(profile)
-
-        if blank is not None:
-            ix[:blank[0]] = False
-            ix[-blank[1]:] = False
-
-        return torch.abs(pred[ix] - profile[ix]).mean(), pred
-
-    def ciffy(
-        self: Score,
-        profile: torch.Tensor,
-        poly: ciffy.Polymer,
-        blank: tuple[int, int] | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Score a ciffy Polymer object.
-
-        Args:
-            profile: Target SHAPE profile
-            poly: RNA polymer structure
-            blank: Tuple of (start, end) residues to mask
-
-        Returns:
-            Tuple of (MAE score, predicted profile)
-        """
-        pred = self.module.ciffy(poly)
-        ix = ~torch.isnan(profile)
-
-        if blank is not None:
-            ix[:blank[0]] = False
-            ix[-blank[1]:] = False
-
-        return torch.mean((pred[ix] - profile[ix]).abs()), pred
-
-    def relax(
-        self: Score,
-        profile: torch.Tensor,
-        poly: ciffy.Polymer,
-        steps: int = 1,
-        lr: float = 1e-3,
-        alpha: float = 1e-3,
-    ) -> ciffy.Polymer:
-        """
-        Relax structure coordinates to match target profile.
-
-        Args:
-            profile: Target SHAPE profile
-            poly: Initial polymer structure
-            steps: Number of optimization steps
-            lr: Learning rate
-            alpha: RMSD regularization weight
-
-        Returns:
-            Relaxed polymer structure
-        """
-        relaxed = deepcopy(poly)
-
-        relaxed.coordinates.requires_grad_(True)
-        opt = torch.optim.Adam([relaxed.coordinates], lr=lr)
-
-        for _ in trange(steps):
-            opt.zero_grad()
-            mae, _ = self.ciffy(profile, relaxed)
-            loss = mae + alpha * ciffy.rmsd(poly, relaxed)
-            loss.backward()
-            opt.step()
-
-        return relaxed
-
 
 # =============================================================================
 # Ranking
