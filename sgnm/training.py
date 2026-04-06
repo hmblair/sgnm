@@ -108,8 +108,10 @@ class Trainer:
 
         try:
             pred = self.model.ciffy(sample.polymer)
-        except (ValueError, RuntimeError):
+        except (ValueError, RuntimeError) as e:
             self._epoch_skips["model_error"] += 1
+            if self._epoch_skips["model_error"] <= 3:
+                print(f"  [{self.name}] model_error on '{sample.name}': {e}")
             return
 
         target = sample.reactivity
@@ -267,13 +269,18 @@ class Trainer:
     def _save_checkpoint(self, filename: str) -> None:
         checkpoint_dir = Path(self.config.checkpoint_dir) / self.name
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
-        torch.save({
+        checkpoint = {
             "model_state_dict": self.model.state_dict(),
             "optimizer_state_dict": self.optimizer.state_dict(),
             "epoch": self.epoch,
             "global_step": self.global_step,
             "best_val_loss": self.best_val_loss,
-        }, checkpoint_dir / filename)
+        }
+        if hasattr(self.model, "_init_kwargs"):
+            checkpoint["init_kwargs"] = self.model._init_kwargs
+        if hasattr(self.model, "config"):
+            checkpoint["config"] = vars(self.model.config)
+        torch.save(checkpoint, checkpoint_dir / filename)
 
     def finish(self) -> None:
         if self._wandb:

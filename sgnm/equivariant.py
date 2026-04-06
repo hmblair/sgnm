@@ -70,6 +70,15 @@ class EquivariantReactivityModel(nn.Module):
     ):
         super().__init__()
 
+        self._init_kwargs = {
+            "embed_dim": embed_dim, "hidden_mult": hidden_mult,
+            "hidden_layers": hidden_layers, "k_neighbors": k_neighbors,
+            "num_heads": num_heads, "num_bins": num_bins, "rank": rank,
+            "hidden_dim": hidden_dim, "min_dist": min_dist,
+            "max_dist": max_dist, "lvals": lvals, "dropout": dropout,
+            "out_channels": out_channels,
+        }
+
         try:
             from flash_eq import Repr, Graph, EquivariantTransformer
         except ImportError as e:
@@ -170,3 +179,20 @@ class EquivariantReactivityModel(nn.Module):
             (n_residues, out_channels) predicted reactivities.
         """
         return self(poly)
+
+    @classmethod
+    def load(cls, path: str) -> "EquivariantReactivityModel":
+        """Load model from checkpoint.
+
+        Args:
+            path: Path to checkpoint file (as saved by Trainer).
+
+        Returns:
+            Loaded EquivariantReactivityModel.
+        """
+        checkpoint = torch.load(path, weights_only=False)
+        state_dict = checkpoint.get("model_state_dict", checkpoint)
+        kwargs = checkpoint.get("init_kwargs", {})
+        model = cls(**kwargs)
+        model.load_state_dict(state_dict)
+        return model

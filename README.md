@@ -34,11 +34,17 @@ Download from [GitHub Releases](https://github.com/hmblair/sgnm/releases/latest)
 ### Prediction
 
 ```python
-from sgnm.models import SGNM
 import ciffy
 
+# GNM model
+from sgnm.models import SGNM
 model = SGNM.load("gnm-checkpoint.pth")
 
+# Or equivariant model (requires flash-eq + CUDA)
+from sgnm.equivariant import EquivariantReactivityModel
+model = EquivariantReactivityModel.load("equivariant-checkpoint.pth")
+
+# Predict
 poly = ciffy.load("structure.cif", backend="torch")
 reactivity = model.ciffy(poly)  # (N, 2) for [SHAPE, DMS]
 ```

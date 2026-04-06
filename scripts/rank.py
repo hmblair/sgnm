@@ -23,11 +23,7 @@ def load_model(model_type: str, weights: str | None = None):
         return SGNM.load(weights)
     elif model_type == "equivariant":
         from sgnm.equivariant import EquivariantReactivityModel
-        model = EquivariantReactivityModel()
-        if weights:
-            import torch
-            model.load_state_dict(torch.load(weights, weights_only=True)["model_state_dict"])
-        return model
+        return EquivariantReactivityModel.load(weights)
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 
