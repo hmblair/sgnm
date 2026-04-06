@@ -20,17 +20,24 @@ pip install -e .
 pip install -e '.[equivariant]'
 ```
 
+## Pre-trained Weights
+
+Download from [GitHub Releases](https://github.com/hmblair/sgnm/releases/latest):
+
+| Model | Params | Val Correlation (SHAPE / DMS) | File |
+|-------|--------|-------------------------------|------|
+| GNM | 4,626 | +0.41 / +0.34 | `gnm-checkpoint.pth` |
+| Equivariant | 78,798 | +0.70 / +0.60 | `equivariant-checkpoint.pth` |
+
 ## Usage
 
 ### Prediction
 
 ```python
 from sgnm.models import SGNM
-from sgnm.config import ModelConfig
 import ciffy
 
-model = SGNM(ModelConfig(dim=32, layers=2))
-# or: model = SGNM.load("checkpoints/gnm/best.pth")
+model = SGNM.load("gnm-checkpoint.pth")
 
 poly = ciffy.load("structure.cif", backend="torch")
 reactivity = model.ciffy(poly)  # (N, 2) for [SHAPE, DMS]
