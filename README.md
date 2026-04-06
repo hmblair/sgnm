@@ -27,7 +27,7 @@ Download from [GitHub Releases](https://github.com/hmblair/sgnm/releases/latest)
 | Model | Params | Val Correlation (SHAPE / DMS) | File |
 |-------|--------|-------------------------------|------|
 | GNM | 4,626 | +0.41 / +0.34 | `gnm-checkpoint.pth` |
-| Equivariant | 78,798 | +0.70 / +0.60 | `equivariant-checkpoint.pth` |
+| Equivariant | 78,798 | +0.62 / +0.77 | `equivariant-checkpoint.pth` |
 
 ## Usage
 
