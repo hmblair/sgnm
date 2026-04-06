@@ -102,12 +102,22 @@ class Trainer:
         self.model.train()
         self.optimizer.zero_grad()
 
+    def _perturb(self, polymer, noise_std: float):
+        """Add Gaussian noise to polymer coordinates."""
+        if noise_std > 0:
+            polymer = polymer.copy()
+            polymer.coordinates = (
+                polymer.coordinates + torch.randn_like(polymer.coordinates) * noise_std
+            )
+        return polymer
+
     def train_step(self, sample: Sample) -> None:
         """Run one training step on a sample."""
         sample = sample.to(self.config.device)
 
         try:
-            pred = self.model.ciffy(sample.polymer)
+            poly = self._perturb(sample.polymer, self.config.noise_std)
+            pred = self.model.ciffy(poly)
         except (ValueError, RuntimeError) as e:
             self._epoch_skips["model_error"] += 1
             if self._epoch_skips["model_error"] <= 3:
@@ -179,7 +189,8 @@ class Trainer:
         sample = sample.to(self.config.device)
 
         try:
-            pred = self.model.ciffy(sample.polymer)
+            poly = self._perturb(sample.polymer, self.config.val_noise_std)
+            pred = self.model.ciffy(poly)
         except (ValueError, RuntimeError):
             return
 

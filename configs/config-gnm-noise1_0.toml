@@ -1,0 +1,20 @@
+[data]
+reactivity_path = "/oak/stanford/groups/rhiju/sherlock/home/hmblair/data/analysis/map-seq/pdb/pdb130/profiles.h5"
+fasta_path = "/oak/stanford/groups/rhiju/sherlock/home/hmblair/data/analysis/map-seq/pdb/pdb130/data/ref.fasta"
+structures_dir = "/scratch/users/hmblair/data/rna"
+data_format = "v2"
+
+[train]
+learning_rate = 1e-3
+max_epochs = 100
+warmup_epochs = 5.0
+device = "cuda"
+checkpoint_dir = "./checkpoints"
+loss_type = "correlation"
+noise_std = 1.0
+wandb_project = "sgnm"
+wandb_run = "gnm-noise1.0"
+
+[gnm]
+dim = 32
+layers = 2

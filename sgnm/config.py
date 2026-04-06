@@ -109,6 +109,14 @@ class TrainConfig:
     patience: int = 10
     """Epochs without improvement before early stopping."""
 
+    noise_std: float = 0.0
+    """Standard deviation of Gaussian noise added to coordinates during
+    training. Set > 0 for noise-augmented training. Units are Angstroms."""
+
+    val_noise_std: float = 0.0
+    """Standard deviation of Gaussian noise added during validation.
+    Useful for evaluating robustness to structural perturbations."""
+
     device: str = "cpu"
     """Device to train on ('cpu', 'cuda', 'mps')."""
 
