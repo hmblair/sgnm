@@ -123,10 +123,14 @@ def main():
         scale=ciffy.Scale.CHAIN,
         molecule_types=ciffy.Molecule.RNA,
         max_chains=data_config.max_chains,
-        split="val",
+    )
+    splits = poly_dataset.split(
+        train=data_config.train_split,
+        val=data_config.val_split,
         seed=data_config.seed,
     )
-    dataset = ReactivityDataset(poly_dataset, index)
+    val_structures = splits[1] if len(splits) > 1 else splits[0]
+    dataset = ReactivityDataset(val_structures, index)
 
     # Sweep
     print(f"{'Noise (A)':>10} {'SHAPE':>8} {'±':>6} {'DMS':>8} {'±':>6}")
