@@ -155,22 +155,21 @@ class SGNM(nn.Module):
         Returns:
             Loaded SGNM model.
         """
-        checkpoint = torch.load(path, weights_only=True)
+        checkpoint = torch.load(path, weights_only=False, map_location="cpu")
         state_dict = checkpoint.get("model_state_dict", checkpoint)
 
-        # Infer config from weights
-        dim = state_dict["rbf1.mu"].size(0)
-        gnm_channels = state_dict["linear1.layers.0.weight"].size(0)
-        out_channels = state_dict["out_proj.weight"].size(0)
-        # Count hidden layers by looking for linear1.layers.{i}.weight
-        n_layers = sum(1 for k in state_dict if k.startswith("linear1.layers.") and k.endswith(".weight")) - 1
-
-        config = ModelConfig(
-            dim=dim,
-            out_channels=out_channels,
-            gnm_channels=gnm_channels,
-            layers=n_layers,
-        )
+        if "config" in checkpoint:
+            config = ModelConfig(**checkpoint["config"])
+        else:
+            # Infer config from weights
+            dim = state_dict["rbf1.mu"].size(0)
+            out_channels = state_dict["out_proj.weight"].size(0)
+            gnm_channels = state_dict["out_proj.weight"].size(1)
+            n_layers = sum(1 for k in state_dict if k.startswith("linear1.layers.") and k.endswith(".weight")) - 1
+            config = ModelConfig(
+                dim=dim, out_channels=out_channels,
+                gnm_channels=gnm_channels, layers=n_layers,
+            )
         model = cls(config)
         model.load_state_dict(state_dict)
         return model
