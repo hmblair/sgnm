@@ -127,6 +127,7 @@ def main():
     splits = poly_dataset.split(
         train=data_config.train_split,
         val=data_config.val_split,
+        test=data_config.test_split,
         seed=data_config.seed,
     )
     val_structures = splits[1] if len(splits) > 1 else splits[0]
