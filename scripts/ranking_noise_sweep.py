@@ -110,12 +110,13 @@ def main():
     args = parser.parse_args()
 
     # Load model
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     if args.model == "gnm":
         from sgnm.models import SGNM
-        model = SGNM.load(args.weights)
+        model = SGNM.load(args.weights).to(device)
     else:
         from sgnm.equivariant import EquivariantReactivityModel
-        model = EquivariantReactivityModel.load(args.weights)
+        model = EquivariantReactivityModel.load(args.weights).to(device)
 
     # Load ground truth structure
     gt_poly = ciffy.load(args.ground_truth, backend="torch").strip()
