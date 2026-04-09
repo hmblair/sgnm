@@ -13,8 +13,8 @@ import argparse
 import sys
 from pathlib import Path
 
-import torch
 import numpy as np
+import torch
 
 from sgnm.config import DataConfig, ModelConfig
 from sgnm.data import ReactivityDataset, load_reactivity_index
@@ -48,7 +48,10 @@ def evaluate_at_noise(model, dataset, noise_std, repeats=1, device="cpu"):
 
                 try:
                     pred = model.ciffy(poly)
-                except (ValueError, RuntimeError):
+                except (ValueError, RuntimeError) as e:
+                    if not hasattr(evaluate_at_noise, '_err_logged'):
+                        print(f"  model error: {e}", file=sys.stderr)
+                        evaluate_at_noise._err_logged = True
                     continue
 
                 target = sample.reactivity

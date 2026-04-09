@@ -190,7 +190,7 @@ class EquivariantReactivityModel(nn.Module):
         Returns:
             Loaded EquivariantReactivityModel.
         """
-        checkpoint = torch.load(path, weights_only=False)
+        checkpoint = torch.load(path, weights_only=False, map_location="cpu")
         state_dict = checkpoint.get("model_state_dict", checkpoint)
         kwargs = checkpoint.get("init_kwargs", {})
         model = cls(**kwargs)
