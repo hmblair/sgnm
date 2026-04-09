@@ -1,8 +1,24 @@
 """Loss functions for reactivity prediction."""
 from __future__ import annotations
 
+import numpy as np
 import torch
 import torch.nn.functional as F
+
+
+def pearsonr_np(x, y):
+    """Pearson correlation coefficient for numpy arrays.
+
+    Returns (r, p_value) matching scipy.stats.pearsonr interface.
+    """
+    x, y = np.asarray(x, dtype=float), np.asarray(y, dtype=float)
+    n = len(x)
+    xm, ym = x - x.mean(), y - y.mean()
+    r = (xm * ym).sum() / (np.sqrt((xm ** 2).sum() * (ym ** 2).sum()) + 1e-12)
+    t = r * np.sqrt((n - 2) / (1 - r ** 2 + 1e-12))
+    # Two-sided p-value from t-distribution (approximation)
+    p = 2 * np.exp(-0.5 * t ** 2) / np.sqrt(2 * np.pi) if n > 2 else 1.0
+    return float(r), float(p)
 
 
 def pearson_correlation(

@@ -15,9 +15,9 @@ import ciffy
 import numpy as np
 import pandas as pd
 import torch
-from scipy.stats import pearsonr
 
 from sgnm.data import load_reactivity_index
+from sgnm.losses import pearsonr_np as pearsonr
 from sgnm.scoring import rank
 from rank import load_model
 

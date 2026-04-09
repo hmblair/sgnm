@@ -22,10 +22,10 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from scipy.stats import pearsonr
 
 import ciffy
-from sgnm.scoring import rank, _normalize, _correlation
+from sgnm.losses import pearsonr_np as pearsonr
+from sgnm.scoring import _normalize, _correlation
 
 
 def parse_casp_scores(csv_path, metric, target=None):
