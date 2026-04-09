@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "sgnm"
 version = "2.0.0"
 description = "Predict RNA chemical probing reactivity from 3D structure"
-license = "CC-BY-NC-4.0"
+license = "MIT"
 authors = [
     { name = "Hamish M. Blair", email = "hmblair@stanford.edu" },
 ]
