@@ -69,6 +69,56 @@ class RelaxResult:
 
 
 # =============================================================================
+# Metrics
+# =============================================================================
+
+
+def _metric(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    mask: torch.Tensor,
+    metric: str = "correlation",
+) -> torch.Tensor:
+    """Compute a metric between pred and target, handling per-channel masking.
+
+    Args:
+        pred: Predictions, shape (N,) or (N, C).
+        target: Targets, shape (N,) or (N, C).
+        mask: Boolean mask, shape (N,) or (N, C).
+        metric: One of "mae", "mse", "correlation".
+
+    Returns:
+        Scalar mean across channels.
+    """
+    if pred.dim() == 1:
+        pred = pred.unsqueeze(-1)
+    if target.dim() == 1:
+        target = target.unsqueeze(-1)
+    if mask.dim() == 1:
+        mask = mask.unsqueeze(-1).expand_as(pred)
+
+    # Zero out masked positions so they don't contribute to sums
+    p = pred.where(mask, pred.new_zeros(()))
+    t = target.where(mask, target.new_zeros(()))
+    n = mask.sum(dim=0).clamp(min=1)  # (C,)
+
+    if metric == "mae":
+        return (torch.abs(p - t).sum(dim=0) / n).mean()
+    elif metric == "mse":
+        return (((p - t) ** 2).sum(dim=0) / n).mean()
+    elif metric == "correlation":
+        p = p - (p.sum(dim=0) / n)
+        t = t - (t.sum(dim=0) / n)
+        p = p * mask
+        t = t * mask
+        num = (p * t).sum(dim=0)
+        den = torch.linalg.norm(p, dim=0) * torch.linalg.norm(t, dim=0) + 1e-8
+        return (num / den).mean()
+    else:
+        raise ValueError(f"Unknown metric: {metric}")
+
+
+# =============================================================================
 # StructureScorer
 # =============================================================================
 
@@ -116,16 +166,7 @@ class StructureScorer:
         mask: torch.Tensor,
     ) -> torch.Tensor:
         """Compute the scoring metric."""
-        if self.config.metric == "mae":
-            return torch.abs(pred[mask] - target[mask]).mean()
-        elif self.config.metric == "mse":
-            return ((pred[mask] - target[mask]) ** 2).mean()
-        elif self.config.metric == "correlation":
-            p, t = pred[mask], target[mask]
-            p = p - p.mean()
-            t = t - t.mean()
-            return (p * t).sum() / (torch.linalg.norm(p) * torch.linalg.norm(t))
-        raise ValueError(f"Unknown metric: {self.config.metric}")
+        return _metric(pred, target, mask, self.config.metric)
 
     def score(
         self,
@@ -282,22 +323,6 @@ class StructureRelaxer:
 # Ranking
 # =============================================================================
 
-def _normalize(x: torch.Tensor) -> torch.Tensor:
-    min_val = x.min()
-    max_val = (x - min_val).max()
-    if max_val > 0:
-        return (x - min_val) / max_val
-    return x - min_val
-
-
-def _correlation(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-    p = pred - pred.mean(dim=0, keepdim=True)
-    t = target - target.mean(dim=0, keepdim=True)
-    num = (p * t).sum(dim=0)
-    den = torch.sqrt((p ** 2).sum(dim=0) * (t ** 2).sum(dim=0))
-    return num / (den + 1e-8)
-
-
 @dataclass
 class RankingEntry:
     """A single ranked structure."""
@@ -358,17 +383,11 @@ def rank(
         for path in tqdm(cif_files, desc="Ranking"):
             try:
                 poly = ciffy.load(str(path), backend="torch")
-                pred = _normalize(model.ciffy(poly))
-
-                if reactivity.dim() > 1:
-                    corr = _correlation(
-                        pred.unsqueeze(-1).expand_as(reactivity),
-                        reactivity,
-                    )
-                    score = (corr ** 2 * corr.sign()).sum().item()
-                else:
-                    score = _correlation(pred, _normalize(reactivity)).item()
-
+                pred = model.ciffy(poly)
+                mask = ~torch.isnan(reactivity)
+                if mask.dim() == 1:
+                    mask = mask & ~torch.isnan(pred.squeeze(-1))
+                score = _metric(pred, reactivity, mask, "correlation").item()
                 entries.append(RankingEntry(file=path.name, score=score, rank=0))
             except Exception:
                 continue
