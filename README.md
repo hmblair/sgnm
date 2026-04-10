@@ -80,6 +80,21 @@ python scripts/train.py config.toml
 
 Both models train in lockstep on the same data with per-channel SHAPE/DMS metrics logged to wandb.
 
+### Scoring
+
+Score a structure against an experimental reactivity profile:
+
+```python
+import torch
+import sgnm
+
+model = sgnm.SGNM.load("gnm-checkpoint.pth")
+scorer = sgnm.StructureScorer(model, sgnm.ScoringConfig(metric="mae"))
+
+result = scorer.score_cif_file("structure.cif", experimental_profile)
+print(result.score_value)  # MAE between prediction and experiment
+```
+
 ### Ranking
 
 Score and rank decoy structures against an experimental reactivity profile:
