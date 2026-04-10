@@ -19,6 +19,9 @@ def build_model(name: str, cfg: dict):
     elif name == "equivariant":
         from sgnm.equivariant import EquivariantReactivityModel
         return EquivariantReactivityModel(**cfg)
+    elif name == "hybrid":
+        from sgnm.hybrid import HybridReactivityModel
+        return HybridReactivityModel(**cfg)
     else:
         raise ValueError(f"Unknown model: {name}")
 
@@ -30,7 +33,7 @@ def run(config_path: str):
     train_config = TrainConfig(**cfg.get("train", {}))
 
     models = {}
-    for name in ("gnm", "equivariant"):
+    for name in ("gnm", "equivariant", "hybrid"):
         if name in cfg:
             models[name] = build_model(name, cfg[name])
 
