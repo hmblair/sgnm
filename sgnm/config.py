@@ -186,9 +186,6 @@ class BatchScoringConfig:
     output_dir: str | None = None
     """Directory for filtered output (if copying files)."""
 
-    profile_path: str | None = None
-    """Path to HDF5 file with target profiles."""
-
     file_pattern: str = "*.cif"
     """Glob pattern for files to process."""
 

@@ -17,6 +17,7 @@ import ciffy
 from tqdm import tqdm
 
 from .config import ScoringConfig, FilterConfig, RelaxConfig, BatchScoringConfig
+from ciffy.rna import ReactivityIndex
 
 
 # =============================================================================
@@ -352,6 +353,7 @@ class BatchScorer:
         self,
         scorer: StructureScorer,
         config: BatchScoringConfig,
+        index: ReactivityIndex,
         filter_config: FilterConfig | None = None,
     ) -> None:
         """
@@ -360,40 +362,13 @@ class BatchScorer:
         Args:
             scorer: Scorer to use for individual files
             config: Batch scoring configuration
+            index: Reactivity index for matching profiles to structures
             filter_config: Filtering configuration
         """
         self.scorer = scorer
         self.config = config
+        self.index = index
         self.filter_config = filter_config or FilterConfig()
-        self._profile_cache: dict[str, torch.Tensor] = {}
-
-    def _load_profiles(self) -> None:
-        """Load all profiles from the profile file."""
-        if not self.config.profile_path:
-            return
-
-        import h5py
-        with h5py.File(self.config.profile_path, 'r') as f:
-            # Try different HDF5 formats
-            if 'ids' in f:
-                # v2 format
-                names = list(f['ids'][:].astype(str))
-                if 'PDB130-2A3/reactivity' in f:
-                    reacs = torch.from_numpy(f['PDB130-2A3/reactivity'][:])
-                    for i, name in enumerate(names):
-                        self._profile_cache[name] = reacs[i]
-            elif 'id_strings' in f:
-                # v1 format
-                names = f['id_strings'][0].astype(str)
-                reacs = torch.from_numpy(f['r_norm'][:])
-                for name, reac in zip(names, reacs):
-                    self._profile_cache[name] = reac
-
-    def _get_profile(self, name: str) -> torch.Tensor | None:
-        """Get profile for a given name."""
-        if not self._profile_cache and self.config.profile_path:
-            self._load_profiles()
-        return self._profile_cache.get(name)
 
     def _get_cif_files(self) -> list[Path]:
         """Get list of .cif files to process."""
@@ -402,36 +377,30 @@ class BatchScorer:
             return list(input_dir.rglob(self.config.file_pattern))
         return list(input_dir.glob(self.config.file_pattern))
 
-    def score_all(
-        self,
-        profiles: dict[str, torch.Tensor] | None = None,
-        progress: bool = True,
-    ) -> BatchScoringResults:
+    def score_all(self, progress: bool = True) -> BatchScoringResults:
         """
         Score all .cif files in the input directory.
 
         Args:
-            profiles: Dict mapping names to profiles (if not using profile_path)
             progress: Show progress bar
 
         Returns:
             BatchScoringResults with all results
         """
-        if profiles:
-            self._profile_cache = profiles
-
         cif_files = self._get_cif_files()
         results = []
 
         iterator = tqdm(cif_files) if progress else cif_files
 
         for cif_path in iterator:
-            profile = self._get_profile(cif_path.stem)
-            if profile is None:
-                continue
-
             try:
-                result = self.scorer.score_cif_file(cif_path, profile)
+                poly = ciffy.load(str(cif_path), backend="torch")
+                match = self.index.match(poly)
+                if match is None:
+                    continue
+                result = self.scorer.score_polymer(match.reactivity, poly)
+                result.metadata["path"] = str(cif_path)
+                result.metadata["name"] = Path(cif_path).stem
                 results.append(result)
             except Exception as e:
                 print(f"Error processing {cif_path}: {e}")
@@ -441,16 +410,11 @@ class BatchScorer:
             filter_config=self.filter_config,
         )
 
-    def filter_and_copy(
-        self,
-        profiles: dict[str, torch.Tensor] | None = None,
-        progress: bool = True,
-    ) -> BatchScoringResults:
+    def filter_and_copy(self, progress: bool = True) -> BatchScoringResults:
         """
         Score all files, filter by threshold, and copy passing files.
 
         Args:
-            profiles: Dict mapping names to profiles
             progress: Show progress bar
 
         Returns:
@@ -458,7 +422,7 @@ class BatchScorer:
         """
         import shutil
 
-        batch_results = self.score_all(profiles, progress)
+        batch_results = self.score_all(progress)
 
         if self.config.output_dir:
             output_dir = Path(self.config.output_dir)
