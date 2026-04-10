@@ -92,7 +92,14 @@ model = sgnm.SGNM.load("gnm-checkpoint.pth")
 scorer = sgnm.StructureScorer(model, sgnm.ScoringConfig(metric="mae"))
 
 result = scorer.score_cif_file("structure.cif", experimental_profile)
-print(result.score_value)  # MAE between prediction and experiment
+print(result.score_value)
+```
+
+Available metrics: `mae`, `mse`, `correlation`.
+
+```python
+# Pearson correlation scorer
+scorer = sgnm.StructureScorer(model, sgnm.ScoringConfig(metric="correlation"))
 ```
 
 ### Ranking
