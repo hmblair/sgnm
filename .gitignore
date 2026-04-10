@@ -6,7 +6,3 @@ dist/
 .DS_Store
 checkpoints/
 figures/
-
-# Generated outputs
-orig.cif
-new.cif
