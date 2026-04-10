@@ -17,9 +17,7 @@ from .config import (
     DataConfig,
     TrainConfig,
     ScoringConfig,
-    FilterConfig,
     RelaxConfig,
-    BatchScoringConfig,
 )
 
 # Neural Network Layers
@@ -32,11 +30,9 @@ from .schedulers import get_cosine_schedule_with_warmup
 # Scoring
 from .scoring import (
     StructureScorer,
-    BatchScorer,
     StructureRelaxer,
     ScoringResult,
     RelaxResult,
-    BatchScoringResults,
 )
 
 # Training
@@ -80,19 +76,15 @@ __all__ = [
     "DataConfig",
     "TrainConfig",
     "ScoringConfig",
-    "FilterConfig",
     "RelaxConfig",
-    "BatchScoringConfig",
     # NN
     "RadialBasisFunctions",
     "DenseNetwork",
     # Scoring
     "StructureScorer",
-    "BatchScorer",
     "StructureRelaxer",
     "ScoringResult",
     "RelaxResult",
-    "BatchScoringResults",
     # Training
     "train",
     "TrainResults",

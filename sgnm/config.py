@@ -149,20 +149,6 @@ class ScoringConfig:
 
 
 @dataclass
-class FilterConfig:
-    """Configuration for filtering predictions by score."""
-
-    threshold: float = 0.5
-    """Score threshold for filtering."""
-
-    mode: Literal["below", "above"] = "below"
-    """Filter mode: 'below' keeps scores < threshold (good for MAE)."""
-
-    top_k: int | None = None
-    """Alternative: keep top K best predictions."""
-
-
-@dataclass
 class RelaxConfig:
     """Configuration for structure relaxation."""
 
@@ -176,18 +162,3 @@ class RelaxConfig:
     """RMSD regularization weight."""
 
 
-@dataclass
-class BatchScoringConfig:
-    """Configuration for batch scoring of .cif folders."""
-
-    input_dir: str = ""
-    """Directory containing .cif files to score."""
-
-    output_dir: str | None = None
-    """Directory for filtered output (if copying files)."""
-
-    file_pattern: str = "*.cif"
-    """Glob pattern for files to process."""
-
-    recursive: bool = False
-    """Whether to search subdirectories."""

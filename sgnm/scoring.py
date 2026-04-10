@@ -3,9 +3,8 @@ Scoring components for SGNM.
 
 This module provides:
 - StructureScorer: Core scoring logic (model-agnostic)
-- BatchScorer: Batch processing of .cif folders
 - StructureRelaxer: Gradient-based structure optimization
-- Score: Backward-compatible wrapper
+- rank: Rank decoy structures by reactivity agreement
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
@@ -16,8 +15,7 @@ import torch.nn as nn
 import ciffy
 from tqdm import tqdm
 
-from .config import ScoringConfig, FilterConfig, RelaxConfig, BatchScoringConfig
-from ciffy.rna import ReactivityIndex
+from .config import ScoringConfig, RelaxConfig
 
 
 # =============================================================================
@@ -68,64 +66,6 @@ class RelaxResult:
     def save(self, path: str | Path) -> None:
         """Save relaxed structure to file."""
         self.relaxed.write(str(path))
-
-
-@dataclass
-class BatchScoringResults:
-    """Container for batch scoring results with filtering."""
-
-    results: list[ScoringResult]
-    """All scoring results."""
-
-    filter_config: FilterConfig
-    """Configuration used for filtering."""
-
-    @property
-    def scores(self) -> list[float]:
-        """Get all scores as a list."""
-        return [r.score_value for r in self.results]
-
-    @property
-    def passed(self) -> list[ScoringResult]:
-        """Results that pass the filter threshold."""
-        filtered = [
-            r for r in self.results
-            if self._passes_filter(r.score_value)
-        ]
-
-        # Apply top_k if specified
-        if self.filter_config.top_k is not None:
-            reverse = self.filter_config.mode == "above"
-            filtered = sorted(filtered, key=lambda r: r.score_value, reverse=reverse)
-            filtered = filtered[:self.filter_config.top_k]
-
-        return filtered
-
-    @property
-    def failed(self) -> list[ScoringResult]:
-        """Results that fail the filter threshold."""
-        passed_set = set(id(r) for r in self.passed)
-        return [r for r in self.results if id(r) not in passed_set]
-
-    def _passes_filter(self, score: float) -> bool:
-        if self.filter_config.mode == "below":
-            return score < self.filter_config.threshold
-        return score > self.filter_config.threshold
-
-    def summary(self) -> dict:
-        """Return summary statistics."""
-        scores = self.scores
-        if not scores:
-            return {"total": 0, "passed": 0, "failed": 0}
-
-        return {
-            "total": len(self.results),
-            "passed": len(self.passed),
-            "failed": len(self.failed),
-            "mean_score": sum(scores) / len(scores),
-            "min_score": min(scores),
-            "max_score": max(scores),
-        }
 
 
 # =============================================================================
@@ -337,108 +277,6 @@ class StructureRelaxer:
             final_score=history[-1]["score"],
         )
 
-
-# =============================================================================
-# BatchScorer
-# =============================================================================
-
-class BatchScorer:
-    """
-    Process folders of .cif predictions and filter by score.
-
-    Main interface for synthetic data pipeline.
-    """
-
-    def __init__(
-        self,
-        scorer: StructureScorer,
-        config: BatchScoringConfig,
-        index: ReactivityIndex,
-        filter_config: FilterConfig | None = None,
-    ) -> None:
-        """
-        Initialize batch scorer.
-
-        Args:
-            scorer: Scorer to use for individual files
-            config: Batch scoring configuration
-            index: Reactivity index for matching profiles to structures
-            filter_config: Filtering configuration
-        """
-        self.scorer = scorer
-        self.config = config
-        self.index = index
-        self.filter_config = filter_config or FilterConfig()
-
-    def _get_cif_files(self) -> list[Path]:
-        """Get list of .cif files to process."""
-        input_dir = Path(self.config.input_dir)
-        if self.config.recursive:
-            return list(input_dir.rglob(self.config.file_pattern))
-        return list(input_dir.glob(self.config.file_pattern))
-
-    def score_all(self, progress: bool = True) -> BatchScoringResults:
-        """
-        Score all .cif files in the input directory.
-
-        Args:
-            progress: Show progress bar
-
-        Returns:
-            BatchScoringResults with all results
-        """
-        cif_files = self._get_cif_files()
-        results = []
-
-        iterator = tqdm(cif_files) if progress else cif_files
-
-        for cif_path in iterator:
-            try:
-                poly = ciffy.load(str(cif_path), backend="torch")
-                match = self.index.match(poly)
-                if match is None:
-                    continue
-                result = self.scorer.score_polymer(match.reactivity, poly)
-                result.metadata["path"] = str(cif_path)
-                result.metadata["name"] = Path(cif_path).stem
-                results.append(result)
-            except Exception as e:
-                print(f"Error processing {cif_path}: {e}")
-
-        return BatchScoringResults(
-            results=results,
-            filter_config=self.filter_config,
-        )
-
-    def filter_and_copy(self, progress: bool = True) -> BatchScoringResults:
-        """
-        Score all files, filter by threshold, and copy passing files.
-
-        Args:
-            progress: Show progress bar
-
-        Returns:
-            BatchScoringResults with filtered results
-        """
-        import shutil
-
-        batch_results = self.score_all(progress)
-
-        if self.config.output_dir:
-            output_dir = Path(self.config.output_dir)
-            output_dir.mkdir(parents=True, exist_ok=True)
-
-            for result in batch_results.passed:
-                src = Path(result.metadata["path"])
-                dst = output_dir / src.name
-                shutil.copy(src, dst)
-
-        return batch_results
-
-
-# =============================================================================
-# Score (Backward Compatible)
-# =============================================================================
 
 # =============================================================================
 # Ranking
