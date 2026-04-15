@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=64"]
+requires = ["setuptools>=64", "setuptools-scm>=8.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "sgnm"
-version = "2.0.0"
+dynamic = ["version"]
 description = "Predict RNA chemical probing reactivity from 3D structure"
 license = "MIT"
 authors = [
@@ -26,3 +26,10 @@ include = ["sgnm*"]
 [project.optional-dependencies]
 equivariant = ["flash-eq>=0.1.0"]
 train = ["wandb", "matplotlib"]
+
+[tool.setuptools_scm]
+version_scheme = "guess-next-dev"
+local_scheme = "node-and-date"
+tag_regex = "^v(?P<version>.*)$"
+write_to = "sgnm/_version.py"
+fallback_version = "0.0.0.dev0"

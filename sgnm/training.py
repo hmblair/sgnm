@@ -12,20 +12,8 @@ from dlu.training import LossTracker
 
 from .config import TrainConfig, DataConfig
 from .data import ReactivityDataset, Sample
-from .losses import mae_loss, mse_loss, correlation_loss
-from .schedulers import get_cosine_schedule_with_warmup
-
-
-def _normalize(x: torch.Tensor) -> torch.Tensor:
-    """Normalize tensor to [0, 1] range, per-column for 2D input."""
-    if x.dim() == 1:
-        min_val = x.min()
-        max_val = (x - min_val).max()
-        return (x - min_val) / max_val.clamp(min=1e-8)
-    # Per-column normalization for (N, C)
-    min_val = x.min(dim=0).values
-    max_val = (x - min_val).max(dim=0).values.clamp(min=1e-8)
-    return (x - min_val) / max_val
+from .scoring import metric, normalize
+from dlu.schedulers import get_cosine_schedule_with_warmup
 
 
 @dataclass
@@ -38,7 +26,6 @@ class TrainResults:
     history: list[dict] = field(default_factory=list)
 
 
-LOSS_FNS = {"mae": mae_loss, "mse": mse_loss, "correlation": correlation_loss}
 
 
 class Trainer:
@@ -85,7 +72,6 @@ class Trainer:
                 min_lr_ratio=config.min_lr_ratio,
             )
 
-        self._loss_fn = LOSS_FNS[config.loss_type]
         self._train_tracker = LossTracker(name)
         self._val_tracker = LossTracker(f"{name}/val")
 
@@ -134,10 +120,12 @@ class Trainer:
         # Normalize per-channel
         pred = pred[mask]
         target = target[mask]
-        pred = _normalize(pred)
-        target = _normalize(target)
+        pred = normalize(pred)
+        target = normalize(target)
 
-        loss = self._loss_fn(pred, target)
+        loss = metric(pred, target, metric=self.config.loss_type).mean()
+        if self.config.loss_type == "correlation":
+            loss = -loss
         loss.backward()
 
         if self.config.gradient_clip:
@@ -200,19 +188,20 @@ class Trainer:
         if mask.size(0) != pred.size(0):
             return
 
-        pred = _normalize(pred[mask])
-        target = _normalize(target[mask])
-
+        pred = normalize(pred[mask])
+        target = normalize(target[mask])
         # Combined metrics
-        self._val_mae_tracker.update(mae_loss(pred, target).item())
-        self._val_corr_tracker.update(correlation_loss(pred, target).item())
+        self._val_mae_tracker.update(metric(pred, target, metric="mae").mean().item())
+        corr = metric(pred, target, metric="correlation")
+        self._val_corr_tracker.update(corr.mean().item())
 
         # Per-channel metrics
-        if pred.dim() > 1 and pred.size(1) >= 2:
-            self._val_shape_mae.update(mae_loss(pred[:, 0], target[:, 0]).item())
-            self._val_shape_corr.update(correlation_loss(pred[:, 0], target[:, 0]).item())
-            self._val_dms_mae.update(mae_loss(pred[:, 1], target[:, 1]).item())
-            self._val_dms_corr.update(correlation_loss(pred[:, 1], target[:, 1]).item())
+        if corr.dim() > 0 and corr.size(0) >= 2:
+            self._val_shape_corr.update(corr[0].item())
+            self._val_dms_corr.update(corr[1].item())
+            mae = metric(pred, target, metric="mae")
+            self._val_shape_mae.update(mae[0].item())
+            self._val_dms_mae.update(mae[1].item())
 
     def end_validation(self) -> dict:
         val_mae = self._val_mae_tracker.average_loss
@@ -281,16 +270,14 @@ class Trainer:
         checkpoint_dir = Path(self.config.checkpoint_dir) / self.name
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
         checkpoint = {
+            "model_type": type(self.model).__name__,
             "model_state_dict": self.model.state_dict(),
+            "init_kwargs": self.model._init_kwargs,
             "optimizer_state_dict": self.optimizer.state_dict(),
             "epoch": self.epoch,
             "global_step": self.global_step,
             "best_val_loss": self.best_val_loss,
         }
-        if hasattr(self.model, "_init_kwargs"):
-            checkpoint["init_kwargs"] = self.model._init_kwargs
-        if hasattr(self.model, "config"):
-            checkpoint["config"] = vars(self.model.config)
         torch.save(checkpoint, checkpoint_dir / filename)
 
     def finish(self) -> None:
@@ -306,22 +293,21 @@ class Trainer:
 
 
 def train(
-    models: dict[str, nn.Module],
+    name: str,
+    model: nn.Module,
     data_config: DataConfig,
     train_config: TrainConfig,
-) -> dict[str, TrainResults]:
-    """
-    Train one or more reactivity prediction models on the same data.
-
-    All models see the same samples in the same order at each epoch.
+) -> TrainResults:
+    """Train a reactivity prediction model.
 
     Args:
-        models: Dict of {name: model}. Each model must have a .ciffy() method.
+        name: Model name (used for logging and checkpoints).
+        model: Model with a .ciffy() method.
         data_config: Dataset configuration.
         train_config: Training loop configuration.
 
     Returns:
-        Dict of {name: TrainResults}.
+        TrainResults with best val loss and final epoch.
     """
     import random
     import numpy as np
@@ -331,15 +317,13 @@ def train(
     random.seed(seed)
     np.random.seed(seed)
 
-    # Build datasets (shared across all models)
     from ciffy.biochemistry import Scale, Molecule
     from ciffy.nn import PolymerDataset
     from .data import load_reactivity_index
 
     index = load_reactivity_index(
-        data_config.reactivity_path,
+        data_config.reactivity_paths,
         data_config.fasta_path,
-        data_config.data_format,
     )
 
     structures = PolymerDataset(
@@ -360,77 +344,36 @@ def train(
     print(f"Training samples: {len(train_dataset)}")
     if val_dataset:
         print(f"Validation samples: {len(val_dataset)}")
+    print(f"[{name}] Parameters: {sum(p.numel() for p in model.parameters())}")
 
-    # Create per-model trainers
-    trainers: dict[str, Trainer] = {}
-    for name, model in models.items():
-        # Tag wandb run per model
-        tc = TrainConfig(**{
-            f.name: getattr(train_config, f.name)
-            for f in train_config.__dataclass_fields__.values()
-        })
-        if tc.wandb_run:
-            tc.wandb_run = f"{tc.wandb_run}-{name}"
-        elif tc.wandb_project:
-            tc.wandb_run = name
-
-        print(f"[{name}] Parameters: {sum(p.numel() for p in model.parameters())}")
-        trainers[name] = Trainer(name, model, tc, len(train_dataset))
-
-    # Console progress on training data
+    trainer = Trainer(name, model, train_config, len(train_dataset))
     progress = ConsoleProgress(train_dataset, name="train")
 
-    # Shared training loop
-    results: dict[str, TrainResults] = {}
     for epoch in range(train_config.max_epochs):
-        # Train
-        for t in trainers.values():
-            t.begin_epoch(epoch)
+        trainer.begin_epoch(epoch)
 
         progress.start_epoch(epoch)
         for sample in progress:
-            for t in trainers.values():
-                t.train_step(sample)
-            progress.update({"loss": list(trainers.values())[0]._train_tracker.current_loss})
+            trainer.train_step(sample)
+            progress.update({"loss": trainer._train_tracker.current_loss})
 
-        train_metrics = {n: t.end_epoch() for n, t in trainers.items()}
+        train_metrics = trainer.end_epoch()
 
-        # Print dataset summary after first epoch
         if epoch == 0:
             print(f"\nTraining data:\n{train_dataset.summary()}")
 
-        # Validate
-        val_metrics = {}
+        val_metrics = None
         if val_dataset:
-            for t in trainers.values():
-                t.begin_validation()
-
+            trainer.begin_validation()
             for sample in val_dataset:
-                for t in trainers.values():
-                    t.validate_step(sample)
+                trainer.validate_step(sample)
+            val_metrics = trainer.end_validation()
 
-            val_metrics = {n: t.end_validation() for n, t in trainers.items()}
-
-        # Log and check stopping
-        stopped = []
-        for name, t in trainers.items():
-            t.log_epoch(epoch, train_metrics[name], val_metrics.get(name))
-            if val_metrics and t.should_stop():
-                print(f"[{name}] Early stopping at epoch {epoch}")
-                stopped.append(name)
-
-        for name in stopped:
-            trainers[name].finish()
-            results[name] = trainers[name].results()
-            del trainers[name]
-
-        if not trainers:
+        trainer.log_epoch(epoch, train_metrics, val_metrics)
+        if val_metrics and trainer.should_stop():
+            print(f"[{name}] Early stopping at epoch {epoch}")
             break
 
-    # Finalize remaining
     progress.close()
-    for name, t in trainers.items():
-        t.finish()
-        results[name] = t.results()
-
-    return results
+    trainer.finish()
+    return trainer.results()

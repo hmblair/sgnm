@@ -4,10 +4,10 @@ Requires flash-eq: pip install 'sgnm[equivariant]'
 """
 
 import ciffy
-from sgnm.equivariant import EquivariantReactivityModel
+import sgnm
 
 # Load a trained equivariant checkpoint
-model = EquivariantReactivityModel.load("path/to/checkpoint.pth")
+model = sgnm.load("path/to/checkpoint.pth")
 model.eval()
 
 # Load an RNA structure and predict reactivity

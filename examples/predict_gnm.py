@@ -4,7 +4,7 @@ import ciffy
 import sgnm
 
 # Load a trained SGNM checkpoint
-model = sgnm.SGNM.load("path/to/checkpoint.pth")
+model = sgnm.load("path/to/checkpoint.pth")
 model.eval()
 
 # Load an RNA structure and predict reactivity

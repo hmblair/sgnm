@@ -14,14 +14,10 @@ def load_config(path: str) -> dict:
 def build_model(name: str, cfg: dict):
     if name == "gnm":
         from sgnm.models import SGNM
-        from sgnm.config import ModelConfig
-        return SGNM(ModelConfig(**cfg))
+        return SGNM(**cfg)
     elif name == "equivariant":
         from sgnm.equivariant import EquivariantReactivityModel
         return EquivariantReactivityModel(**cfg)
-    elif name == "hybrid":
-        from sgnm.hybrid import HybridReactivityModel
-        return HybridReactivityModel(**cfg)
     else:
         raise ValueError(f"Unknown model: {name}")
 
@@ -32,23 +28,14 @@ def run(config_path: str):
     data_config = DataConfig(**cfg.get("data", {}))
     train_config = TrainConfig(**cfg.get("train", {}))
 
-    models = {}
-    for name in ("gnm", "equivariant", "hybrid"):
+    for name in ("gnm", "equivariant"):
         if name in cfg:
-            models[name] = build_model(name, cfg[name])
-
-    if not models:
-        print("Error: config must contain [gnm] and/or [equivariant] section")
-        sys.exit(1)
-
-    results = train(models=models, data_config=data_config, train_config=train_config)
-
-    for name, r in results.items():
-        print(f"\n[{name}] Best val loss: {r.best_val_loss:.4f}, final epoch: {r.final_epoch}")
+            model = build_model(name, cfg[name])
+            result = train(name, model, data_config, train_config)
+            print(f"\n[{name}] Best val loss: {result.best_val_loss:.4f}, "
+                  f"final epoch: {result.final_epoch}")
 
 
 if __name__ == "__main__":
     config_path = sys.argv[1] if len(sys.argv) > 1 else "config.toml"
     run(config_path)
-else:
-    run(sys.argv[1] if len(sys.argv) > 1 else "config.toml")

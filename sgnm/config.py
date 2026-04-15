@@ -5,30 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-@dataclass
-class ModelConfig:
-    """Configuration for SGNM model architecture."""
-
-    dim: int = 32
-    """Dimension of radial basis functions and hidden layers."""
-
-    out_channels: int = 2
-    """Number of output channels (e.g. 2 for SHAPE+DMS)."""
-
-    gnm_channels: int = 4
-    """Number of independent GNM adjacency matrices. Each produces a separate
-    variance, then a linear layer projects to out_channels."""
-
-    layers: int = 1
-    """Number of hidden layers in the dense networks."""
-
-    dropout: float = 0.0
-    """Dropout rate for hidden layers."""
-
-    weights_path: str | None = None
-    """Path to pre-trained weights for loading."""
-
-
 # =============================================================================
 # Data Configuration
 # =============================================================================
@@ -37,17 +13,15 @@ class ModelConfig:
 class DataConfig:
     """Configuration for dataset loading and preprocessing."""
 
-    reactivity_path: str = ""
-    """Path to HDF5 file containing reactivity profiles."""
+    reactivity_paths: list[str] | str = ""
+    """Path(s) to HDF5 reactivity datasets, one per condition.
+    Each entry is ``path/to/file.h5`` or ``path/to/file.h5:key``."""
 
     fasta_path: str = ""
     """Path to FASTA file containing probed sequences."""
 
     structures_dir: str = ""
     """Directory containing structural files (CIF/PDB)."""
-
-    data_format: Literal["v1", "v2"] = "v2"
-    """Format of the reactivity data file (v1: old format, v2: PDB130 format)."""
 
     max_chains: int = 2
     """Maximum number of chains per structure (filter out larger complexes)."""
@@ -135,30 +109,12 @@ class TrainConfig:
 class ScoringConfig:
     """Configuration for scoring operations."""
 
-    weights_path: str | None = None
-    """Path to model weights for scoring."""
-
-    blank_start: int | None = None
-    """Number of residues to mask at sequence start."""
-
-    blank_end: int | None = None
-    """Number of residues to mask at sequence end."""
-
     metric: Literal["mae", "mse", "correlation"] = "mae"
     """Scoring metric to use."""
 
+    channels: list[int] | None = None
+    """Which output channels to use for scoring (None = all)."""
 
-@dataclass
-class RelaxConfig:
-    """Configuration for structure relaxation."""
 
-    steps: int = 100
-    """Number of relaxation steps."""
-
-    lr: float = 1e-3
-    """Learning rate for coordinate optimization."""
-
-    alpha: float = 1e-3
-    """RMSD regularization weight."""
 
 

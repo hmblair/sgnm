@@ -26,8 +26,8 @@ Download from [GitHub Releases](https://github.com/hmblair/sgnm/releases/latest)
 
 | Model | Params | Val Correlation (SHAPE / DMS) | File |
 |-------|--------|-------------------------------|------|
-| GNM | 4,626 | +0.41 / +0.34 | `gnm-checkpoint.pth` |
-| Equivariant | 78,798 | +0.62 / +0.77 | `equivariant-checkpoint.pth` |
+| GNM | 4,626 | +0.39 / +0.35 | `gnm-checkpoint.pth` |
+| Equivariant | 78,798 | +0.63 / +0.75 | `equivariant-checkpoint.pth` |
 
 ## Usage
 
@@ -35,50 +35,15 @@ Download from [GitHub Releases](https://github.com/hmblair/sgnm/releases/latest)
 
 ```python
 import ciffy
+import sgnm
 
-# GNM model
-from sgnm.models import SGNM
-model = SGNM.load("gnm-checkpoint.pth")
-
-# Or equivariant model (requires flash-eq + CUDA)
-from sgnm.equivariant import EquivariantReactivityModel
-model = EquivariantReactivityModel.load("equivariant-checkpoint.pth")
+# Load any model from a checkpoint (auto-detects model type)
+model = sgnm.load("checkpoint.pth")
 
 # Predict
 poly = ciffy.load("structure.cif", backend="torch")
 reactivity = model.ciffy(poly)  # (N, 2) for [SHAPE, DMS]
 ```
-
-### Training
-
-Training is configured via TOML. Include `[gnm]` and/or `[equivariant]` sections:
-
-```toml
-[data]
-reactivity_path = "profiles.h5"
-fasta_path = "ref.fasta"
-structures_dir = "structures/"
-
-[train]
-learning_rate = 1e-3
-max_epochs = 100
-loss_type = "correlation"
-wandb_project = "sgnm"
-
-[gnm]
-dim = 32
-layers = 2
-
-[equivariant]
-embed_dim = 32
-hidden_layers = 4
-```
-
-```bash
-python scripts/train.py config.toml
-```
-
-Both models train in lockstep on the same data with per-channel SHAPE/DMS metrics logged to wandb.
 
 ### Scoring
 
@@ -87,40 +52,73 @@ Score a structure against an experimental reactivity profile:
 ```python
 import torch
 import sgnm
+from sgnm.config import ScoringConfig
 
-model = sgnm.SGNM.load("gnm-checkpoint.pth")
-scorer = sgnm.StructureScorer(model, sgnm.ScoringConfig(metric="mae"))
+model = sgnm.load("checkpoint.pth")
+scorer = sgnm.StructureScorer(model, ScoringConfig(metric="correlation"))
 
-result = scorer.score_cif_file("structure.cif", experimental_profile)
-print(result.score_value)
+poly = ciffy.load("structure.cif", backend="torch")
+score = scorer.score(experimental_profile, poly)
 ```
 
 Available metrics: `mae`, `mse`, `correlation`.
 
+Use `channels` to score specific output channels (e.g. SHAPE only):
+
 ```python
-# Pearson correlation scorer
-scorer = sgnm.StructureScorer(model, sgnm.ScoringConfig(metric="correlation"))
+scorer = sgnm.StructureScorer(model, ScoringConfig(metric="correlation", channels=[0]))
 ```
 
 ### Ranking
 
-Score and rank decoy structures against an experimental reactivity profile:
+Rank decoy structures by agreement with experimental reactivity:
+
+```python
+import sgnm
+
+model = sgnm.load("checkpoint.pth")
+result = sgnm.rank(model, "decoys/", reactivity)
+
+print(f"Best: {result.best.file} (score={result.best.score:.4f})")
+result.to_csv("rankings.csv")
+```
+
+Or via the command line:
 
 ```bash
 python scripts/rank.py decoys/ \
-    --model gnm --weights checkpoints/gnm/best.pth \
+    --model gnm --weights checkpoint.pth \
     --profile profiles.h5 --fasta ref.fasta --id 8UYS_A
 ```
 
-### Evaluation
+### Training
 
-Compare SGNM rankings against structural quality metrics (TM-score, RMSD):
+Training is configured via TOML files. See `configs/example.toml` for a template.
 
 ```bash
-python scripts/evaluate_ranking.py decoys/ \
-    --model gnm --weights checkpoints/gnm/best.pth \
-    --profile profiles.h5 --fasta ref.fasta --id 8UYS_A \
-    --scores casp_scores.csv --metric tm_score --target R1149
+python scripts/train.py config.toml
+```
+
+#### Data format
+
+Reactivity data is provided as one HDF5 file per condition, each containing
+a `reactivity` dataset of shape `(N, L)`. Paths support an optional
+`:key` suffix for datasets within a file (e.g. `profiles.h5:PDB130-2A3/reactivity`).
+
+```toml
+[data]
+reactivity_paths = ["2a3.h5", "dms.h5"]
+fasta_path = "sequences.fasta"
+structures_dir = "structures/"
+
+[train]
+learning_rate = 1e-3
+max_epochs = 100
+loss_type = "correlation"
+
+[gnm]
+dim = 32
+layers = 2
 ```
 
 ## Contact

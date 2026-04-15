@@ -65,40 +65,71 @@ def _read_fasta_sequences(path: str) -> list[str]:
     return sequences
 
 
-def load_reactivity_index(
-    reactivity_path: str,
-    fasta_path: str,
-    data_format: str = "v2",
-) -> ReactivityIndex:
-    """Build a ReactivityIndex from an HDF5 reactivity file and FASTA sequences.
+def _parse_h5_spec(spec: str) -> tuple[str, str]:
+    """Parse ``path/to/file.h5:dataset_key`` into (path, key).
 
-    The HDF5 entries and FASTA entries must be in the same order.
+    If no ``:key`` suffix is given, defaults to ``"reactivity"``.
+    """
+    # Split on last colon that isn't part of a Windows drive letter
+    # and where the right side doesn't start with / (i.e. not a path sep)
+    idx = spec.rfind(":")
+    if idx > 0 and not spec[idx + 1:].startswith(("/", "\\")):
+        return spec[:idx], spec[idx + 1:]
+    return spec, "reactivity"
+
+
+def load_reactivity_index(
+    reactivity_paths: str | list[str],
+    fasta_path: str,
+) -> ReactivityIndex:
+    """Build a ReactivityIndex from HDF5 reactivity file(s) and a FASTA.
+
+    Each entry is a path to an HDF5 file optionally suffixed with
+    ``:dataset_key`` (defaults to ``"reactivity"``). Each entry provides
+    one channel of reactivity data with shape ``(N, L)``. When multiple
+    entries are given the channels are stacked to produce ``(N, L, C)``.
+
+    Examples::
+
+        # Single file, default key
+        load_reactivity_index("2a3.h5", "seqs.fasta")
+
+        # Two channels from separate files
+        load_reactivity_index(["2a3.h5", "dms.h5"], "seqs.fasta")
+
+        # Two channels from the same file, different keys
+        load_reactivity_index(
+            ["profiles.h5:PDB130-2A3/reactivity",
+             "profiles.h5:PDB130-DMS/reactivity"],
+            "seqs.fasta",
+        )
 
     Args:
-        reactivity_path: Path to HDF5 file with reactivity profiles.
+        reactivity_paths: Path(s) to HDF5 datasets, one per condition.
         fasta_path: Path to FASTA file with probed sequences.
-        data_format: HDF5 format ("v1" or "v2").
 
     Returns:
         Populated ReactivityIndex.
     """
+    if isinstance(reactivity_paths, str):
+        reactivity_paths = [reactivity_paths]
+
     sequences = _read_fasta_sequences(fasta_path)
 
-    index = ReactivityIndex()
-    with h5py.File(reactivity_path, "r") as f:
-        if data_format == "v1":
-            names = f["id_strings"][0].astype(str)
-            reacs = f["r_norm"][:]
-            for name, seq, reac in zip(names, sequences, reacs):
-                index.add(name, seq, reac)
+    channels = []
+    for spec in reactivity_paths:
+        path, key = _parse_h5_spec(spec)
+        with h5py.File(path, "r") as f:
+            channels.append(f[key][:])
 
-        elif data_format == "v2":
-            names = list(f["ids"][:].astype(str))
-            reacs_2a3 = f["PDB130-2A3/reactivity"][:]
-            reacs_dms = f["PDB130-DMS/reactivity"][:]
-            for i, (name, seq) in enumerate(zip(names, sequences)):
-                reac = np.stack([reacs_2a3[i], reacs_dms[i]], axis=-1)
-                index.add(name, seq, reac)
+    if len(channels) == 1:
+        reactivities = channels[0]  # (N, L)
+    else:
+        reactivities = np.stack(channels, axis=-1)  # (N, L, C)
+
+    index = ReactivityIndex()
+    for i, seq in enumerate(sequences):
+        index.add(str(i), seq, reactivities[i])
 
     return index
 

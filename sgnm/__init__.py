@@ -2,95 +2,34 @@
 SGNM: Structure-Guided Normal Mode Model for RNA reactivity prediction.
 """
 
-# =============================================================================
-# Backward Compatible Exports (original API)
-# =============================================================================
 from .models import SGNM
+from .equivariant import EquivariantReactivityModel
+from .scoring import StructureScorer, rank
+from .training import train
+from .data import load_reactivity_index
 
-# =============================================================================
-# New API
-# =============================================================================
-
-# Configuration
-from .config import (
-    ModelConfig,
-    DataConfig,
-    TrainConfig,
-    ScoringConfig,
-    RelaxConfig,
-)
-
-# Neural Network Layers
-from .nn import RadialBasisFunctions, DenseNetwork
-
-# Loss Functions and Schedulers
-from .losses import pearson_correlation, mae_loss, mse_loss, correlation_loss
-from .schedulers import get_cosine_schedule_with_warmup
-
-# Scoring
-from .scoring import (
-    StructureScorer,
-    StructureRelaxer,
-    ScoringResult,
-    RelaxResult,
-)
-
-# Training
-from .training import train, TrainResults
-
-# Data
-from .data import ReactivityDataset, Sample, ProfileLoader, load_reactivity_index
-
-# =============================================================================
-# Convenience Functions
-# =============================================================================
-
-def equivariant(**kwargs) -> "EquivariantReactivityModel":
-    """Create an EquivariantReactivityModel. Requires flash-eq."""
-    from .equivariant import EquivariantReactivityModel
-    return EquivariantReactivityModel(**kwargs)
+_MODEL_REGISTRY = {
+    "SGNM": SGNM,
+    "EquivariantReactivityModel": EquivariantReactivityModel,
+}
 
 
-def load(path: str) -> SGNM:
+def load(path: str):
+    """Load a model from a checkpoint.
+
+    Dispatches to the correct model class based on the ``model_type``
+    key in the checkpoint.  Falls back to SGNM for legacy checkpoints.
     """
-    Load an SGNM model from a checkpoint.
-
-    Args:
-        path: Path to checkpoint file.
-
-    Returns:
-        Loaded SGNM model.
-    """
-    return SGNM.load(path)
+    import torch
+    checkpoint = torch.load(path, weights_only=False, map_location="cpu")
+    model_type = checkpoint.get("model_type", "SGNM")
+    cls = _MODEL_REGISTRY.get(model_type)
+    if cls is None:
+        raise ValueError(f"Unknown model type: {model_type}")
+    return cls.load(path)
 
 
-__version__ = "2.0.0"
-
-__all__ = [
-    # Models
-    "SGNM",
-    # Models
-    "load",
-    # Config
-    "ModelConfig",
-    "DataConfig",
-    "TrainConfig",
-    "ScoringConfig",
-    "RelaxConfig",
-    # NN
-    "RadialBasisFunctions",
-    "DenseNetwork",
-    # Scoring
-    "StructureScorer",
-    "StructureRelaxer",
-    "ScoringResult",
-    "RelaxResult",
-    # Training
-    "train",
-    "TrainResults",
-    # Data
-    "ReactivityDataset",
-    "Sample",
-    "ProfileLoader",
-    "load_reactivity_index",
-]
+try:
+    from ._version import version as __version__
+except ImportError:
+    __version__ = "0.0.0.dev0"

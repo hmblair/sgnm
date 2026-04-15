@@ -1,71 +1,37 @@
 """
-Scoring components for SGNM.
+Scoring and metrics for SGNM.
 
 This module provides:
-- StructureScorer: Core scoring logic (model-agnostic)
-- StructureRelaxer: Gradient-based structure optimization
-- rank: Rank decoy structures by reactivity agreement
+- metric: Compute MAE, MSE, or Pearson correlation between predictions and targets.
+- StructureScorer: Score a model's predictions against experimental profiles.
+- rank: Rank decoy structures by reactivity agreement.
+- pearsonr_np: Numpy Pearson correlation matching scipy.stats.pearsonr interface.
 """
 from __future__ import annotations
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from copy import deepcopy
+
+import numpy as np
 import torch
 import torch.nn as nn
 import ciffy
 from tqdm import tqdm
 
-from .config import ScoringConfig, RelaxConfig
+from .config import ScoringConfig
 
 
 # =============================================================================
-# Result Containers
+# Utilities
 # =============================================================================
 
-@dataclass
-class ScoringResult:
-    """Result container for scoring operations."""
 
-    score: torch.Tensor
-    """The computed score (MAE, MSE, or correlation)."""
-
-    prediction: torch.Tensor
-    """Model prediction."""
-
-    target: torch.Tensor
-    """Target profile."""
-
-    mask: torch.Tensor
-    """Boolean mask for valid positions."""
-
-    metadata: dict = field(default_factory=dict)
-    """Additional metadata (e.g., file path, name)."""
-
-    @property
-    def score_value(self) -> float:
-        """Get score as a Python float."""
-        return self.score.item()
-
-
-@dataclass
-class RelaxResult:
-    """Result container for structure relaxation."""
-
-    original: ciffy.Polymer
-    """Original polymer structure."""
-
-    relaxed: ciffy.Polymer
-    """Relaxed polymer structure."""
-
-    history: list[dict]
-    """Optimization history (loss, score, rmsd per step)."""
-
-    final_score: float
-    """Final score after relaxation."""
-
-    def save(self, path: str | Path) -> None:
-        """Save relaxed structure to file."""
-        self.relaxed.write(str(path))
+def normalize(x: torch.Tensor) -> torch.Tensor:
+    """Min-max normalize to [0, 1], per-column for 2D input."""
+    if x.dim() == 1:
+        x = x.unsqueeze(-1)
+    min_val = x.min(dim=0).values
+    max_val = (x - min_val).max(dim=0).values.clamp(min=1e-8)
+    return ((x - min_val) / max_val).squeeze()
 
 
 # =============================================================================
@@ -73,27 +39,56 @@ class RelaxResult:
 # =============================================================================
 
 
-def _metric(
+def pearsonr_np(x, y):
+    """Pearson correlation coefficient for numpy arrays.
+
+    Returns (r, p_value) matching scipy.stats.pearsonr interface.
+    """
+    x, y = np.asarray(x, dtype=float), np.asarray(y, dtype=float)
+    n = len(x)
+    xm, ym = x - x.mean(), y - y.mean()
+    r = (xm * ym).sum() / (np.sqrt((xm ** 2).sum() * (ym ** 2).sum()) + 1e-12)
+    t = r * np.sqrt((n - 2) / (1 - r ** 2 + 1e-12))
+    p = 2 * np.exp(-0.5 * t ** 2) / np.sqrt(2 * np.pi) if n > 2 else 1.0
+    return float(r), float(p)
+
+
+def metric(
     pred: torch.Tensor,
     target: torch.Tensor,
-    mask: torch.Tensor,
+    mask: torch.Tensor | None = None,
     metric: str = "correlation",
 ) -> torch.Tensor:
     """Compute a metric between pred and target, handling per-channel masking.
 
+    Differentiable — can be used directly as a training loss (negate
+    correlation to minimize).
+
     Args:
         pred: Predictions, shape (N,) or (N, C).
         target: Targets, shape (N,) or (N, C).
-        mask: Boolean mask, shape (N,) or (N, C).
+        mask: Boolean mask, shape (N,) or (N, C). Defaults to non-NaN positions.
         metric: One of "mae", "mse", "correlation".
 
     Returns:
-        Scalar mean across channels.
+        Per-channel values, shape (C,). Scalar if single-channel.
+
+    Raises:
+        ValueError: If pred and target have incompatible shapes.
     """
     if pred.dim() == 1:
         pred = pred.unsqueeze(-1)
     if target.dim() == 1:
         target = target.unsqueeze(-1)
+
+    if mask is None:
+        mask = ~torch.isnan(target)
+
+    if pred.shape != target.shape:
+        raise ValueError(
+            f"Shape mismatch: pred {tuple(pred.shape)} vs target {tuple(target.shape)}"
+        )
+
     if mask.dim() == 1:
         mask = mask.unsqueeze(-1).expand_as(pred)
 
@@ -103,9 +98,9 @@ def _metric(
     n = mask.sum(dim=0).clamp(min=1)  # (C,)
 
     if metric == "mae":
-        return (torch.abs(p - t).sum(dim=0) / n).mean()
+        result = torch.abs(p - t).sum(dim=0) / n
     elif metric == "mse":
-        return (((p - t) ** 2).sum(dim=0) / n).mean()
+        result = ((p - t) ** 2).sum(dim=0) / n
     elif metric == "correlation":
         p = p - (p.sum(dim=0) / n)
         t = t - (t.sum(dim=0) / n)
@@ -113,9 +108,11 @@ def _metric(
         t = t * mask
         num = (p * t).sum(dim=0)
         den = torch.linalg.norm(p, dim=0) * torch.linalg.norm(t, dim=0) + 1e-8
-        return (num / den).mean()
+        result = num / den
     else:
         raise ValueError(f"Unknown metric: {metric}")
+
+    return result.squeeze()
 
 
 # =============================================================================
@@ -135,188 +132,32 @@ class StructureScorer:
         model: nn.Module,
         config: ScoringConfig | None = None,
     ) -> None:
-        """
-        Initialize scorer.
-
-        Args:
-            model: Model to use for predictions
-            config: Scoring configuration
-        """
         self.model = model
         self.config = config or ScoringConfig()
 
-        # Freeze model for scoring
         self.model.eval()
         for param in self.model.parameters():
             param.requires_grad = False
 
-    def _apply_blank_mask(self, profile: torch.Tensor) -> torch.Tensor:
-        """Create mask excluding blank regions and NaN values."""
-        mask = ~torch.isnan(profile)
-        if self.config.blank_start is not None:
-            mask[:self.config.blank_start] = False
-        if self.config.blank_end is not None:
-            mask[-self.config.blank_end:] = False
-        return mask
-
-    def _compute_metric(
-        self,
-        pred: torch.Tensor,
-        target: torch.Tensor,
-        mask: torch.Tensor,
-    ) -> torch.Tensor:
-        """Compute the scoring metric."""
-        return _metric(pred, target, mask, self.config.metric)
-
     def score(
         self,
         target_profile: torch.Tensor,
-        coords: torch.Tensor,
-        frames: torch.Tensor | None = None,
-    ) -> ScoringResult:
-        """
-        Score raw tensor inputs.
-
-        Args:
-            target_profile: Target SHAPE profile, shape (N,)
-            coords: Residue coordinates, shape (N, 3)
-            frames: Local frames, shape (N, 3, 3) or None
-
-        Returns:
-            ScoringResult with score, prediction, and metadata
-        """
-        pred = self.model(coords, frames)
-        mask = self._apply_blank_mask(target_profile)
-        score = self._compute_metric(pred, target_profile, mask)
-        return ScoringResult(
-            score=score,
-            prediction=pred,
-            target=target_profile,
-            mask=mask,
-        )
-
-    def score_polymer(
-        self,
-        target_profile: torch.Tensor,
         poly: ciffy.Polymer,
-    ) -> ScoringResult:
-        """
-        Score a ciffy Polymer object.
+    ) -> float:
+        """Score a polymer against a target reactivity profile.
 
         Args:
-            target_profile: Target SHAPE profile
-            poly: RNA polymer structure
+            target_profile: Target reactivity, shape (N,) or (N, C).
+            poly: RNA polymer structure.
 
         Returns:
-            ScoringResult with score, prediction, and metadata
+            Scalar score (higher = better for correlation).
         """
         pred = self.model.ciffy(poly)
-        mask = self._apply_blank_mask(target_profile)
-        score = self._compute_metric(pred, target_profile, mask)
-        return ScoringResult(
-            score=score,
-            prediction=pred,
-            target=target_profile,
-            mask=mask,
-        )
+        if self.config.channels is not None:
+            pred = pred[:, self.config.channels]
+        return metric(pred, target_profile, metric=self.config.metric).mean().item()
 
-    def score_cif_file(
-        self,
-        cif_path: str | Path,
-        target_profile: torch.Tensor,
-    ) -> ScoringResult:
-        """
-        Score a .cif file directly.
-
-        Args:
-            cif_path: Path to .cif file
-            target_profile: Target SHAPE profile
-
-        Returns:
-            ScoringResult with score, prediction, and metadata
-        """
-        poly = ciffy.load(str(cif_path), backend="torch")
-        result = self.score_polymer(target_profile, poly)
-        result.metadata["path"] = str(cif_path)
-        result.metadata["name"] = Path(cif_path).stem
-        return result
-
-
-# =============================================================================
-# StructureRelaxer
-# =============================================================================
-
-class StructureRelaxer:
-    """
-    Gradient-based structure optimization.
-
-    Optimizes coordinates to minimize the scoring loss while regularizing
-    against RMSD drift from the original structure.
-    """
-
-    def __init__(
-        self,
-        scorer: StructureScorer,
-        config: RelaxConfig | None = None,
-    ) -> None:
-        """
-        Initialize relaxer.
-
-        Args:
-            scorer: Scorer to use as objective
-            config: Relaxation configuration
-        """
-        self.scorer = scorer
-        self.config = config or RelaxConfig()
-
-    def relax(
-        self,
-        target_profile: torch.Tensor,
-        poly: ciffy.Polymer,
-        progress: bool = True,
-    ) -> RelaxResult:
-        """
-        Optimize structure coordinates to match target profile.
-
-        Args:
-            target_profile: Target SHAPE profile
-            poly: Initial polymer structure
-            progress: Show progress bar
-
-        Returns:
-            RelaxResult with original, relaxed structure, and history
-        """
-        relaxed = deepcopy(poly)
-        relaxed.coordinates.requires_grad_(True)
-
-        optimizer = torch.optim.Adam([relaxed.coordinates], lr=self.config.lr)
-        history = []
-
-        iterator = trange(self.config.steps) if progress else range(self.config.steps)
-
-        for step in iterator:
-            optimizer.zero_grad()
-
-            result = self.scorer.score_polymer(target_profile, relaxed)
-            rmsd = ciffy.rmsd(poly, relaxed)
-            loss = result.score + self.config.alpha * rmsd
-
-            loss.backward()
-            optimizer.step()
-
-            history.append({
-                "step": step,
-                "loss": loss.item(),
-                "score": result.score_value,
-                "rmsd": rmsd.item(),
-            })
-
-        return RelaxResult(
-            original=poly,
-            relaxed=relaxed,
-            history=history,
-            final_score=history[-1]["score"],
-        )
 
 
 # =============================================================================
@@ -360,6 +201,7 @@ def rank(
     model: nn.Module,
     structures: str | Path | list[str | Path],
     reactivity: torch.Tensor,
+    config: ScoringConfig | None = None,
 ) -> RankingResult:
     """Rank decoy structures by agreement between predicted and experimental reactivity.
 
@@ -368,29 +210,33 @@ def rank(
         structures: Directory of .cif files, or a list of .cif paths.
         reactivity: Target reactivity aligned to structure length,
             shape (L,) or (L, C) for multi-channel.
+        config: Scoring configuration (blank masking, metric).
 
     Returns:
         RankingResult sorted by score (best first).
     """
+    device = next(model.parameters()).device
+    reactivity = reactivity.to(device)
+    scorer = StructureScorer(model, config)
+
     if isinstance(structures, (str, Path)):
         cif_files = sorted(Path(structures).glob("*.cif"))
     else:
         cif_files = [Path(p) for p in structures]
 
     entries = []
-    model.eval()
-    with torch.no_grad():
-        for path in tqdm(cif_files, desc="Ranking"):
-            try:
-                poly = ciffy.load(str(path), backend="torch")
-                pred = model.ciffy(poly)
-                mask = ~torch.isnan(reactivity)
-                if mask.dim() == 1:
-                    mask = mask & ~torch.isnan(pred.squeeze(-1))
-                score = _metric(pred, reactivity, mask, "correlation").item()
-                entries.append(RankingEntry(file=path.name, score=score, rank=0))
-            except Exception:
-                continue
+    for path in tqdm(cif_files, desc="Ranking"):
+        try:
+            poly = ciffy.load(str(path), backend="torch")
+            if device.type == "cuda":
+                poly = poly.cuda()
+            score = scorer.score(reactivity, poly)
+            entries.append(RankingEntry(
+                file=path.name, score=score, rank=0,
+            ))
+        except Exception as e:
+            print(f"  Ranking error on {path.name}: {e}")
+            continue
 
     entries.sort(key=lambda e: e.score, reverse=True)
     for i, e in enumerate(entries):

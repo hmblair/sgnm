@@ -1,0 +1,29 @@
+# Example training config. Copy and fill in paths before use.
+
+[data]
+reactivity_paths = [
+    "path/to/2a3.h5",        # one HDF5 per condition
+    "path/to/dms.h5",        # or "file.h5:key" for datasets within a file
+]
+fasta_path = "path/to/sequences.fasta"
+structures_dir = "path/to/structures/"
+
+[train]
+learning_rate = 1e-3
+max_epochs = 100
+warmup_epochs = 5.0
+device = "cuda"
+checkpoint_dir = "./checkpoints"
+loss_type = "correlation"
+# wandb_project = "sgnm"
+# wandb_run = "my-run"
+
+# Include one or both model sections to train.
+
+[gnm]
+dim = 32
+layers = 2
+
+[equivariant]
+embed_dim = 32
+hidden_layers = 4

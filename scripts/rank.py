@@ -36,14 +36,13 @@ def main():
     parser.add_argument("--profile", required=True, help="HDF5 reactivity file")
     parser.add_argument("--fasta", required=True, help="FASTA with probed sequences")
     parser.add_argument("--id", dest="sample_id", required=True, help="Sample ID in profile")
-    parser.add_argument("--format", default="v2", choices=["v1", "v2"])
     parser.add_argument("--output", "-o", help="Output CSV path")
     args = parser.parse_args()
 
     model = load_model(args.model, args.weights)
 
     # Align reactivity to structures via sequence matching
-    index = load_reactivity_index(args.profile, args.fasta, args.format)
+    index = load_reactivity_index(args.profile, args.fasta)
     cif_files = sorted(Path(args.structures).glob("*.cif"))
     reactivity = None
     for path in cif_files:

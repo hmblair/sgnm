@@ -143,9 +143,6 @@ class EquivariantReactivityModel(nn.Module):
             (n_residues, out_channels) predicted reactivities.
         """
         polymer = polymer.torch()
-        device = next(self.parameters()).device
-        if device.type == "cuda":
-            polymer = polymer.cuda()
         n_atoms = polymer.size(Scale.ATOM)
 
         if n_atoms == 0:

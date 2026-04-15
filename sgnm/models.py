@@ -11,8 +11,7 @@ from ciffy.biochemistry.linking import FrameDefinition
 from ciffy.operations.frames import gather
 from ciffy.geometry.transforms import frame_from_positions
 
-from .nn import RadialBasisFunctions, DenseNetwork
-from .config import ModelConfig
+from dlu import RadialBasisFunctions, DenseNetwork
 from .gnm import (
     _gnm_variances,
     _orientation_score,
@@ -39,13 +38,7 @@ NUCLEOBASE_FRAME = FrameDefinition(
 )
 
 
-def _normalize(x: torch.Tensor) -> torch.Tensor:
-    """Normalize tensor to [0, 1] range."""
-    min_val = x.min()
-    max_val = (x - min_val).max()
-    if max_val > 0:
-        return (x - min_val) / max_val
-    return x - min_val
+
 
 
 def _base_frame(poly: ciffy.Polymer) -> torch.Tensor:
@@ -72,24 +65,32 @@ class SGNM(nn.Module):
     """
 
     def __init__(
-        self: SGNM,
-        config: ModelConfig,
+        self,
+        dim: int = 32,
+        out_channels: int = 2,
+        gnm_channels: int = 4,
+        layers: int = 1,
+        dropout: float = 0.0,
     ) -> None:
         super().__init__()
-        self.config = config
-        dim = config.dim
-        k = config.gnm_channels
+        self._init_kwargs = {
+            "dim": dim, "out_channels": out_channels,
+            "gnm_channels": gnm_channels, "layers": layers,
+            "dropout": dropout,
+        }
+
+        k = gnm_channels
 
         # Distance pathway: (N, N) -> (N, N, k)
         self.rbf1 = RadialBasisFunctions(dim)
-        self.linear1 = DenseNetwork(dim, k, [dim] * config.layers)
+        self.linear1 = DenseNetwork(dim, k, [dim] * layers)
 
         # Orientation pathway: (N, N) -> (N, N, k)
         self.rbf2 = RadialBasisFunctions(dim)
-        self.linear2 = DenseNetwork(dim, k, [dim] * config.layers)
+        self.linear2 = DenseNetwork(dim, k, [dim] * layers)
 
         # Project GNM variances to output channels: (N, k) -> (N, out_channels)
-        self.out_proj = nn.Linear(k, config.out_channels)
+        self.out_proj = nn.Linear(k, out_channels)
 
     def forward(
         self: SGNM,
@@ -157,19 +158,7 @@ class SGNM(nn.Module):
         """
         checkpoint = torch.load(path, weights_only=False, map_location="cpu")
         state_dict = checkpoint.get("model_state_dict", checkpoint)
-
-        if "config" in checkpoint:
-            config = ModelConfig(**checkpoint["config"])
-        else:
-            # Infer config from weights
-            dim = state_dict["rbf1.mu"].size(0)
-            out_channels = state_dict["out_proj.weight"].size(0)
-            gnm_channels = state_dict["out_proj.weight"].size(1)
-            n_layers = sum(1 for k in state_dict if k.startswith("linear1.layers.") and k.endswith(".weight")) - 1
-            config = ModelConfig(
-                dim=dim, out_channels=out_channels,
-                gnm_channels=gnm_channels, layers=n_layers,
-            )
-        model = cls(config)
+        kwargs = checkpoint.get("init_kwargs", checkpoint.get("config", {}))
+        model = cls(**kwargs)
         model.load_state_dict(state_dict)
         return model
