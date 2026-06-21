@@ -17,7 +17,7 @@ dependencies = [
     "ciffy",
     "h5py",
     "tqdm",
-    "dlu",
+    "dlu-torch",
 ]
 
 [tool.setuptools.packages.find]
