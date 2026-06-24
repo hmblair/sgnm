@@ -14,7 +14,7 @@ urls = { Homepage = "https://github.com/hmblair/sgnm" }
 requires-python = ">=3.10"
 dependencies = [
     "torch>=2.0",
-    "ciffy",
+    "ciffy>=1.0.3",
     "h5py",
     "tqdm",
     "dlu-torch",
@@ -26,6 +26,10 @@ include = ["sgnm*"]
 [project.optional-dependencies]
 equivariant = ["flash-eq>=0.1.0"]
 train = ["wandb", "matplotlib"]
+test = ["pytest>=7.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.setuptools_scm]
 version_scheme = "guess-next-dev"
