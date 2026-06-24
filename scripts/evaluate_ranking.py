@@ -18,10 +18,10 @@ from pathlib import Path
 import ciffy
 import h5py
 import numpy as np
-import pandas as pd
 import torch
 
 from sgnm.config import ScoringConfig
+from sgnm.data import parse_casp_scores
 from sgnm.scoring import pearsonr_np as pearsonr
 from sgnm.scoring import rank
 
@@ -44,24 +44,6 @@ def load_reactivity(profile_path, low=5, high=129):
     # Normalize to [0, 1]
     r = (r - r.min()) / (r.max() - r.min()).clamp(min=1e-8)
     return r
-
-
-def parse_casp_scores(csv_path, metric, target=None):
-    with open(csv_path) as f:
-        header = f.readline()
-    if header.startswith("#") or "Model" in header:
-        df = pd.read_csv(csv_path, sep=r"\s+", comment="#")
-        return {f"{row['Model']}.cif": float(row[metric]) for _, row in df.iterrows() if metric in row}
-    else:
-        df = pd.read_csv(csv_path)
-        if target:
-            df = df[df["target"] == target]
-        scores = {}
-        for _, row in df.iterrows():
-            filename = f"{row['target']}TS{int(row['gr_code']):03d}_{int(row['model'])}.cif"
-            if metric in row:
-                scores[filename] = float(row[metric])
-        return scores
 
 
 def main():

@@ -6,7 +6,7 @@ from .models import SGNM
 from .equivariant import EquivariantReactivityModel
 from .scoring import StructureScorer, rank
 from .training import train
-from .data import load_reactivity_index
+from .data import load_reactivity_index, parse_casp_scores
 
 _MODEL_REGISTRY = {
     "SGNM": SGNM,

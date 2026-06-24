@@ -134,6 +134,46 @@ def load_reactivity_index(
     return index
 
 
+def parse_casp_scores(
+    csv_path: str,
+    metric: str,
+    target: str | None = None,
+) -> dict[str, float]:
+    """Parse a CASP scores CSV into a ``{filename: metric_value}`` mapping.
+
+    Supports two formats, detected from the header:
+
+    - Official CASP format (``#``-prefixed or containing ``Model``):
+      whitespace-delimited, keyed by the ``Model`` column.
+    - Internal format: comma-delimited with ``target``/``gr_code``/``model``
+      columns, reconstructing filenames as ``{target}TS{gr_code:03d}_{model}.cif``.
+
+    Args:
+        csv_path: Path to the scores CSV.
+        metric: Column name of the structural metric to extract (e.g. ``tm_score``).
+        target: Optional CASP target ID to filter the internal format.
+
+    Returns:
+        Mapping from decoy ``.cif`` filename to metric value.
+    """
+    import pandas as pd
+
+    with open(csv_path) as f:
+        header = f.readline()
+    if header.startswith("#") or "Model" in header:
+        df = pd.read_csv(csv_path, sep=r"\s+", comment="#")
+        return {f"{row['Model']}.cif": float(row[metric]) for _, row in df.iterrows() if metric in row}
+    df = pd.read_csv(csv_path)
+    if target:
+        df = df[df["target"] == target]
+    scores = {}
+    for _, row in df.iterrows():
+        filename = f"{row['target']}TS{int(row['gr_code']):03d}_{int(row['model'])}.cif"
+        if metric in row:
+            scores[filename] = float(row[metric])
+    return scores
+
+
 class ReactivityDataset:
     """Dataset pairing RNA structures with reactivity profiles.
 
